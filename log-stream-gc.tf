@@ -63,6 +63,11 @@ resource "aws_iam_role_policy_attachment" "role_attachment" {
   policy_arn = aws_iam_policy.role_policy.arn
 }
 
+resource "aws_iam_role_policy_attachment" "basic_execution_role_attachment" {
+  role       = aws_iam_role.role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
 resource "aws_lambda_function" "log_stream_gc" {
   function_name = "log-stream-gc"
   s3_bucket     = var.code_bucket
@@ -72,6 +77,7 @@ resource "aws_lambda_function" "log_stream_gc" {
   runtime       = "provided.al2"
   handler       = "ignored"
   publish       = "false"
+  description   = "Clean up older log streams"
   timeout       = 5
   memory_size   = 128
 }
