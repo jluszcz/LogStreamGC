@@ -30,7 +30,6 @@ where
             ))
         })
         .level(LevelFilter::Warn)
-        .level_for("aws_config::profile", LevelFilter::Error)
         .level_for("log_stream_gc", level)
         .level_for(calling_module, level)
         .chain(std::io::stdout())
