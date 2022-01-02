@@ -15,21 +15,21 @@ fn parse_args() -> Args {
         .version("0.1")
         .author("Jacob Luszcz")
         .arg(
-            Arg::with_name("verbose")
-                .short("v")
+            Arg::new("verbose")
+                .short('v')
                 .long("verbose")
                 .help("Verbose mode. Outputs DEBUG and higher log messages."),
         )
         .arg(
-            Arg::with_name("dryrun")
-                .short("d)")
+            Arg::new("dryrun")
+                .short('d')
                 .long("dryrun")
                 .alias("dry-run")
                 .help("Keeps all log streams, even if they would otherwise be deleted."),
         )
         .arg(
-            Arg::with_name("region")
-                .short("r")
+            Arg::new("region")
+                .short('r')
                 .long("region")
                 .required(true)
                 .takes_value(true)
