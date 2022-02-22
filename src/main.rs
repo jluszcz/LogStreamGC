@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{App, Arg};
+use clap::{Arg, Command};
 use log::debug;
 use log_stream_gc::{gc_log_streams, set_up_logger};
 
@@ -11,7 +11,7 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let matches = App::new("log-stream-gc")
+    let matches = Command::new("log-stream-gc")
         .version("0.1")
         .author("Jacob Luszcz")
         .arg(
