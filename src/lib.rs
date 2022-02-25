@@ -59,7 +59,7 @@ async fn describe_log_groups(client: &Client) -> Result<Vec<LogGroup>> {
             .await?;
         debug!("Described log groups");
 
-        log_groups.append(&mut describe_output.log_groups.unwrap_or_else(Vec::new));
+        log_groups.append(&mut describe_output.log_groups.unwrap_or_default());
 
         next_token = describe_output.next_token;
         if next_token.is_none() {
@@ -88,7 +88,7 @@ async fn describe_log_streams(client: &Client, log_group_name: &str) -> Result<V
             .await?;
         debug!("Described log streams for {}", log_group_name);
 
-        log_streams.append(&mut describe_output.log_streams.unwrap_or_else(Vec::new));
+        log_streams.append(&mut describe_output.log_streams.unwrap_or_default());
 
         next_token = describe_output.next_token;
         if next_token.is_none() {
