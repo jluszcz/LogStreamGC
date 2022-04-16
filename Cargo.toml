@@ -8,8 +8,8 @@ default-run = "main"
 
 [dependencies]
 anyhow = "1.0"
-aws-config = "0.9"
-aws-sdk-cloudwatchlogs = "0.9"
+aws-config = "0.10"
+aws-sdk-cloudwatchlogs = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.6"
 clap = { version = "3.1", features = ["env"] }
