@@ -207,7 +207,7 @@ pub async fn gc_log_streams(region: Option<String>, dry_run: bool) -> Result<()>
     //  throttling errors properly in gc_log_stream, use a large max attempts here
     //
     let config = config
-        .retry_config(RetryConfig::default().with_max_attempts(25))
+        .retry_config(RetryConfig::standard().with_max_attempts(25))
         .load()
         .await;
 

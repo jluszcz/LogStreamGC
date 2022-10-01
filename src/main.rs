@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Arg, Command};
+use clap::{Arg, ArgAction, Command};
 use log::debug;
 use log_stream_gc::{gc_log_streams, set_up_logger};
 
@@ -18,6 +18,7 @@ fn parse_args() -> Args {
             Arg::new("verbose")
                 .short('v')
                 .long("verbose")
+                .action(ArgAction::SetTrue)
                 .help("Verbose mode. Outputs DEBUG and higher log messages."),
         )
         .arg(
@@ -25,6 +26,7 @@ fn parse_args() -> Args {
                 .short('d')
                 .long("dryrun")
                 .alias("dry-run")
+                .action(ArgAction::SetTrue)
                 .help("Keeps all log streams, even if they would otherwise be deleted."),
         )
         .arg(
@@ -32,17 +34,16 @@ fn parse_args() -> Args {
                 .short('r')
                 .long("region")
                 .required(true)
-                .takes_value(true)
                 .env("AWS_REGION")
                 .help("AWS region to run garbage collection in."),
         )
         .get_matches();
 
-    let verbose = matches.is_present("verbose");
-    let dry_run = matches.is_present("dryrun");
+    let verbose = matches.get_flag("verbose");
+    let dry_run = matches.get_flag("dryrun");
 
     let region = matches
-        .value_of("region")
+        .get_one::<String>("region")
         .expect("region is required")
         .to_string();
 
