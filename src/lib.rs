@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
-use aws_config::{ConfigLoader, RetryConfig};
+use aws_config::retry::RetryConfig;
+use aws_config::ConfigLoader;
 use aws_sdk_cloudwatchlogs::model::{LogGroup, LogStream};
 use aws_sdk_cloudwatchlogs::{Client, Region};
 use chrono::{Date, DateTime, Duration, NaiveDateTime, Utc};
