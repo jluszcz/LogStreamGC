@@ -3,7 +3,7 @@ use aws_config::retry::RetryConfig;
 use aws_config::ConfigLoader;
 use aws_sdk_cloudwatchlogs::model::{LogGroup, LogStream};
 use aws_sdk_cloudwatchlogs::{Client, Region};
-use chrono::{Date, DateTime, Duration, NaiveDateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
 use log::{debug, info, trace, LevelFilter};
 use std::borrow::Cow;
 
@@ -43,7 +43,10 @@ fn parse_timestamp(timestamp: i64) -> DateTime<Utc> {
     let secs = timestamp / 1000;
     let nsecs = (timestamp % 1000) as u32;
 
-    DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(secs, nsecs), Utc)
+    DateTime::<Utc>::from_utc(
+        NaiveDateTime::from_timestamp_opt(secs, nsecs).expect("Cannot create timestamp"),
+        Utc,
+    )
 }
 
 async fn describe_log_groups(client: &Client) -> Result<Vec<LogGroup>> {
@@ -105,7 +108,7 @@ async fn describe_log_streams(client: &Client, log_group_name: &str) -> Result<V
 
 async fn gc_log_stream(
     client: &Client,
-    keep_from_date: &Date<Utc>,
+    keep_from_date: &NaiveDate,
     log_group_name: &str,
     log_stream: LogStream,
     dry_run: bool,
@@ -118,7 +121,7 @@ async fn gc_log_stream(
         .creation_time()
         .map(parse_timestamp)
         .ok_or_else(|| anyhow!("{:#?} is missing a valid creation time", log_stream))?
-        .date();
+        .date_naive();
 
     if log_stream_creation_date < *keep_from_date {
         debug!(
@@ -165,7 +168,7 @@ async fn gc_log_group(client: &Client, log_group: LogGroup, dry_run: bool) -> Re
         .ok_or_else(|| anyhow!("{:#?} is missing a retention period", log_group))?
         .into();
 
-    let keep_from_date = Utc::now().date() - Duration::days(2 * log_group_retention_period);
+    let keep_from_date = Utc::now().date_naive() - Duration::days(2 * log_group_retention_period);
 
     debug!(
         "Cleaning up {} from before {}",
