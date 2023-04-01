@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use aws_config::retry::RetryConfig;
 use aws_config::ConfigLoader;
-use aws_sdk_cloudwatchlogs::model::{LogGroup, LogStream};
-use aws_sdk_cloudwatchlogs::{Client, Region};
+use aws_sdk_cloudwatchlogs::config::Region;
+use aws_sdk_cloudwatchlogs::types::{LogGroup, LogStream};
+use aws_sdk_cloudwatchlogs::Client;
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
 use log::{debug, info, trace, LevelFilter};
 use std::borrow::Cow;
