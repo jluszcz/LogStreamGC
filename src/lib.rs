@@ -44,7 +44,7 @@ fn parse_timestamp(timestamp: i64) -> DateTime<Utc> {
     let secs = timestamp / 1000;
     let nsecs = (timestamp % 1000) as u32;
 
-    DateTime::<Utc>::from_utc(
+    DateTime::<Utc>::from_naive_utc_and_offset(
         NaiveDateTime::from_timestamp_opt(secs, nsecs).expect("Cannot create timestamp"),
         Utc,
     )
