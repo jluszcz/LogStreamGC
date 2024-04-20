@@ -8,16 +8,16 @@ default-run = "main"
 
 [dependencies]
 anyhow = "1.0"
-aws-config = "1.1"
-aws-sdk-cloudwatchlogs = "1.20"
+aws-config = "1.2"
+aws-sdk-cloudwatchlogs = "1.23"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["env"] }
 fern = "0.6"
-lambda_runtime = "0.10"
+lambda_runtime = "0.11"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.36", features = ["full"] }
+tokio = { version = "1.37", features = ["full"] }
 
 [[bin]]
 name = "bootstrap"
