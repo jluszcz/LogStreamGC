@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Result};
-use aws_config::retry::RetryConfig;
+use anyhow::{Result, anyhow};
 use aws_config::ConfigLoader;
+use aws_config::retry::RetryConfig;
+use aws_sdk_cloudwatchlogs::Client;
 use aws_sdk_cloudwatchlogs::config::Region;
 use aws_sdk_cloudwatchlogs::types::{LogGroup, LogStream};
-use aws_sdk_cloudwatchlogs::Client;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
-use log::{debug, info, trace, LevelFilter};
+use log::{LevelFilter, debug, info, trace};
 use std::borrow::Cow;
 
 const MIN_ITEMS_FOR_PROGRESS_UPDATE: usize = 500;
@@ -78,8 +78,7 @@ async fn describe_log_streams(client: &Client, log_group_name: &str) -> Result<V
     loop {
         trace!(
             "Describing log streams for {} (next_token={:?})",
-            log_group_name,
-            next_token
+            log_group_name, next_token
         );
 
         let describe_output = client

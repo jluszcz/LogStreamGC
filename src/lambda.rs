@@ -1,6 +1,6 @@
-use lambda_runtime::{service_fn, LambdaEvent};
+use lambda_runtime::{LambdaEvent, service_fn};
 use log_stream_gc::{gc_log_streams, set_up_logger};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::error::Error;
 
 type LambdaError = Box<dyn Error + Send + Sync + 'static>;
