@@ -1,10 +1,9 @@
 [package]
 name = "log-stream-gc"
-version = "0.1.0"
 authors = ["Jacob Luszcz"]
-edition = "2024"
-
 default-run = "main"
+version = "0.1.0"
+edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
