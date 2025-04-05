@@ -74,7 +74,7 @@ resource "aws_lambda_function" "log_stream_gc" {
   s3_key        = "log-stream-gc.zip"
   role          = aws_iam_role.role.arn
   architectures = ["arm64"]
-  runtime       = "provided.al2"
+  runtime       = "provided.al2023"
   handler       = "ignored"
   publish       = "false"
   description   = "Clean up older log streams"
