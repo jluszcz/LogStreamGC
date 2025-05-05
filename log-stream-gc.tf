@@ -58,7 +58,7 @@ resource "aws_iam_policy" "role_policy" {
 }
 
 resource "aws_iam_role" "role" {
-  name               = "log-stream-gc-${var.aws_region}"
+  name               = "log-stream-gc.lambda.${var.aws_region}"
   assume_role_policy = data.aws_iam_policy_document.assume_role.json
 }
 
