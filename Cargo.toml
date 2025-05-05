@@ -1,6 +1,7 @@
 [package]
 name = "log-stream-gc"
 authors = ["Jacob Luszcz"]
+default-run = "main"
 version = "0.1.0"
 edition = "2024"
 
