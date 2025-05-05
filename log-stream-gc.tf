@@ -13,6 +13,10 @@ provider "aws" {
   region = var.aws_region
 }
 
+data "aws_s3_bucket" "code_bucket" {
+  bucket = var.code_bucket
+}
+
 resource "aws_cloudwatch_event_rule" "schedule" {
   name                = "log-stream-gc-schedule"
   schedule_expression = "cron(0 15 * * ? *)"
@@ -73,7 +77,7 @@ resource "aws_lambda_function" "log_stream_gc" {
   s3_bucket     = var.code_bucket
   s3_key        = "log-stream-gc.zip"
   role          = aws_iam_role.role.arn
-  architectures = ["arm64"]
+  architectures = ["x86_64"]
   runtime       = "provided.al2023"
   handler       = "ignored"
   publish       = "false"
@@ -85,4 +89,54 @@ resource "aws_lambda_function" "log_stream_gc" {
 resource "aws_cloudwatch_log_group" "log_group" {
   name              = "/aws/lambda/log-stream-gc"
   retention_in_days = "7"
+}
+
+resource "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
+
+  client_id_list = ["sts.amazonaws.com"]
+
+  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+}
+
+data "aws_iam_policy_document" "github" {
+  statement {
+    actions = ["s3:PutObject"]
+    resources = ["${data.aws_s3_bucket.code_bucket.arn}/log-stream-gc.zip"]
+  }
+}
+
+resource "aws_iam_policy" "github" {
+  name   = "log-stream-gc.github.${var.aws_region}"
+  policy = data.aws_iam_policy_document.github.json
+}
+
+resource "aws_iam_role" "github" {
+  name = "log-stream-gc.github.${var.aws_region}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.github.arn
+        },
+        Action = "sts:AssumeRoleWithWebIdentity",
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud" : "sts.amazonaws.com"
+          }
+          StringLike = {
+            "token.actions.githubusercontent.com:sub" : "repo:jluszcz/LogStreamGC:*"
+          },
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "github" {
+  role       = aws_iam_role.github.name
+  policy_arn = aws_iam_policy.github.arn
 }

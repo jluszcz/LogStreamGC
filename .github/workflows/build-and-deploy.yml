@@ -1,0 +1,85 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/**'
+      - 'Cargo**'
+      - 'src/**/*.rs'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update Rust
+        run: |
+          rustup update
+          rustup component add clippy
+
+      - name: Dump Toolchain Info
+        run: |
+          cargo --version --verbose
+          rustc --version
+          cargo clippy --version
+
+      - name: Build
+        run: cargo build
+
+      - name: Test
+        run: cargo test
+
+      - name: Lint
+        run: cargo clippy -- -D warnings
+
+  deploy:
+    needs: build-and-test
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update Rust
+        run: rustup update
+
+      - name: Dump Toolchain Info
+        run: |
+          cargo --version --verbose
+          rustc --version
+
+      - name: Build
+        run: |
+          cargo build --release --bin lambda
+          cp target/release/lambda bootstrap
+          zip -j log-stream-gc.zip bootstrap
+
+      - name: Configure AWS Credentials - us-east-1
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/log-stream-gc.github.us-east-1
+          role-session-name: github-deploy
+          aws-region: us-east-1
+          unset-current-credentials: true
+
+      - name: Deploy Lambda - us-east-1
+        run: aws --region us-east-1 s3 cp log-stream-gc.zip s3://${{ secrets.AWS_US_EAST_1_BUCKET }}/
+
+      - name: Configure AWS Credentials - us-east-2
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/log-stream-gc.github.us-east-2
+          role-session-name: github-deploy
+          aws-region: us-east-2
+          unset-current-credentials: true
+
+      - name: Deploy Lambda - us-east-2
+        run: aws --region us-east-2 s3 cp log-stream-gc.zip s3://${{ secrets.AWS_US_EAST_2_BUCKET }}/
