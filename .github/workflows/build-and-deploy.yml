@@ -55,7 +55,7 @@ jobs:
       - name: Configure AWS Credentials (us-east-1)
         uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.PROJECT }}.us-east-1
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.PROJECT }}.github.us-east-1
           role-session-name: github-deploy
           aws-region: us-east-1
           unset-current-credentials: true
