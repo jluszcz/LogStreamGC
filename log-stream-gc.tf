@@ -75,7 +75,7 @@ resource "aws_iam_role_policy_attachment" "basic_execution_role_attachment" {
 
 resource "aws_lambda_function" "log_stream_gc" {
   function_name = "log-stream-gc"
-  s3_bucket     = var.code_bucket
+  s3_bucket     = "${data.aws_s3_bucket.code_bucket.bucket}"
   s3_key        = "log-stream-gc.zip"
   role          = aws_iam_role.role.arn
   architectures = ["arm64"]
