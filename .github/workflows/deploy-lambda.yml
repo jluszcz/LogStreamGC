@@ -39,4 +39,6 @@ jobs:
           aws-region: ${{ inputs.aws-region }}
 
       - name: Deploy Lambda
-        run: aws --region ${{ inputs.aws-region }} s3 cp ${{ env.PROJECT }}.zip s3://${{ secrets.bucket-name }}/
+        env:
+          AWS_DEFAULT_REGION: ${{ inputs.aws-region }}
+        run: aws s3 cp ${{ env.PROJECT }}.zip s3://${{ secrets.bucket-name }}/
