@@ -11,12 +11,8 @@ on:
       - 'src/**/*.rs'
 
 jobs:
-  build-and-test:
+  build-and-package:
     runs-on: ubuntu-24.04-arm
-
-    permissions:
-      id-token: write
-      contents: read
 
     env:
       BUILD_TARGET: aarch64-unknown-linux-musl
@@ -53,24 +49,29 @@ jobs:
           cp target/${{ env.BUILD_TARGET }}/release/lambda bootstrap
           zip -j ${{ env.PROJECT }}.zip bootstrap
 
-      - name: Configure AWS Credentials (us-east-1)
-        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
+      - name: Upload Package
+        uses: actions/upload-artifact@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.PROJECT }}.github.us-east-1
-          role-session-name: github-deploy
-          aws-region: us-east-1
-          unset-current-credentials: true
+          name: package
+          path: ${{ env.PROJECT }}.zip
+          retention-days: 1
 
-      - name: Deploy Lambda (us-east-1)
-        run: aws --region us-east-1 s3 cp ${{ env.PROJECT }}.zip s3://${{ secrets.AWS_US_EAST_1_BUCKET }}/
+  deploy-us-east-1:
+    needs: build-and-package
 
-      - name: Configure AWS Credentials (us-east-2)
-        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.PROJECT }}.github.us-east-2
-          role-session-name: github-deploy
-          aws-region: us-east-2
-          unset-current-credentials: true
+    uses: ./.github/workflows/deploy-lambda.yml
+    with:
+      aws-region: us-east-1
+    secrets:
+      aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
+      bucket-name: ${{ secrets.AWS_US_EAST_1_BUCKET }}
 
-      - name: Deploy Lambda (us-east-2)
-        run: aws --region us-east-2 s3 cp ${{ env.PROJECT }}.zip s3://${{ secrets.AWS_US_EAST_2_BUCKET }}/
+  deploy-us-east-2:
+    needs: build-and-package
+
+    uses: ./.github/workflows/deploy-lambda.yml
+    with:
+      aws-region: us-east-2
+    secrets:
+      aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
+      bucket-name: ${{ secrets.AWS_US_EAST_2_BUCKET }}

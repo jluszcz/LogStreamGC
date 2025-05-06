@@ -1,0 +1,42 @@
+name: Deploy Lambda
+
+on:
+  workflow_call:
+    inputs:
+      aws-region:
+        required: true
+        type: string
+
+    secrets:
+      bucket-name:
+        required: true
+
+      aws-account-id:
+        required: true
+
+env:
+  PROJECT: log-stream-gc
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Download Package
+        uses: actions/download-artifact@v4
+        with:
+          name: package
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.aws-account-id }}:role/${{ env.PROJECT }}.github.${{ inputs.aws-region }}
+          role-session-name: github-deploy
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Deploy Lambda
+        run: aws --region ${{ inputs.aws-region }} s3 cp ${{ env.PROJECT }}.zip s3://${{ secrets.bucket-name }}/
