@@ -77,7 +77,7 @@ resource "aws_lambda_function" "log_stream_gc" {
   s3_bucket     = var.code_bucket
   s3_key        = "log-stream-gc.zip"
   role          = aws_iam_role.role.arn
-  architectures = ["x86_64"]
+  architectures = ["arm64"]
   runtime       = "provided.al2023"
   handler       = "ignored"
   publish       = "false"

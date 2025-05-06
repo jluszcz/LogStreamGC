@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+
     paths:
       - '.github/workflows/**'
       - 'Cargo**'
@@ -11,13 +12,24 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      BUILD_TARGET: aarch64-unknown-linux-musl
+      CONFIGURE_AWS_CREDS_COMMIT_HASH: ececac1a45f3b08a01d2dd070d28d111c5fe6722
+      PROJECT: log-stream-gc
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update Rust
+      - name: Update and Configure Rust
         run: |
+          sudo apt-get install -y musl-tools
+          rustup target add ${{ env.BUILD_TARGET }}
           rustup update
           rustup component add clippy
 
@@ -28,61 +40,37 @@ jobs:
           cargo clippy --version
 
       - name: Build
-        run: cargo build
+        run: cargo build --release --target ${{ env.BUILD_TARGET }}
 
       - name: Test
-        run: cargo test
+        run: cargo test --target ${{ env.BUILD_TARGET }}
 
       - name: Lint
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --target ${{ env.BUILD_TARGET }} -- -D warnings
 
-  deploy:
-    needs: build-and-test
-
-    runs-on: ubuntu-latest
-
-    permissions:
-      id-token: write
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Update and Configure Rust
+      - name: Package
         run: |
-          sudo apt-get install -y musl-tools
-          rustup update
-          rustup target add x86_64-unknown-linux-musl
+          cp target/${{ env.BUILD_TARGET }}/release/lambda bootstrap
+          zip -j ${{ env.ARTIFACT }}.zip bootstrap
 
-      - name: Dump Toolchain Info
-        run: |
-          cargo --version --verbose
-          rustc --version
-
-      - name: Build
-        run: |
-          cargo build --release --target x86_64-unknown-linux-musl --bin lambda
-          cp target/x86_64-unknown-linux-musl/release/lambda bootstrap
-          zip -j log-stream-gc.zip bootstrap
-
-      - name: Configure AWS Credentials - us-east-1
-        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
+      - name: Configure AWS Credentials (us-east-1)
+        uses: aws-actions/configure-aws-credentials@${{ env.CONFIGURE_AWS_CREDS_COMMIT_HASH}}
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/log-stream-gc.github.us-east-1
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.PROJECT }}.us-east-1
           role-session-name: github-deploy
           aws-region: us-east-1
           unset-current-credentials: true
 
-      - name: Deploy Lambda - us-east-1
-        run: aws --region us-east-1 s3 cp log-stream-gc.zip s3://${{ secrets.AWS_US_EAST_1_BUCKET }}/
+      - name: Deploy Lambda (us-east-1)
+        run: aws --region us-east-1 s3 cp ${{ env.PROJECT }}.zip s3://${{ secrets.AWS_US_EAST_1_BUCKET }}/
 
-      - name: Configure AWS Credentials - us-east-2
-        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
+      - name: Configure AWS Credentials (us-east-2)
+        uses: aws-actions/configure-aws-credentials@${{ env.CONFIGURE_AWS_CREDS_COMMIT_HASH}}
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/log-stream-gc.github.us-east-2
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.PROJECT }}.github.us-east-2
           role-session-name: github-deploy
           aws-region: us-east-2
           unset-current-credentials: true
 
-      - name: Deploy Lambda - us-east-2
-        run: aws --region us-east-2 s3 cp log-stream-gc.zip s3://${{ secrets.AWS_US_EAST_2_BUCKET }}/
+      - name: Deploy Lambda (us-east-2)
+        run: aws --region us-east-2 s3 cp ${{ env.PROJECT }}.zip s3://${{ secrets.AWS_US_EAST_2_BUCKET }}/
