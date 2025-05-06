@@ -17,6 +17,7 @@ data "aws_s3_bucket" "code_bucket" {
   bucket = var.code_bucket
 }
 
+// Run daily at 15:00 UTC
 resource "aws_cloudwatch_event_rule" "schedule" {
   name                = "log-stream-gc-schedule"
   schedule_expression = "cron(0 15 * * ? *)"
