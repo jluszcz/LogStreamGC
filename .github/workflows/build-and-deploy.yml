@@ -50,7 +50,7 @@ jobs:
       - name: Package
         run: |
           cp target/${{ env.BUILD_TARGET }}/release/lambda bootstrap
-          zip -j ${{ env.ARTIFACT }}.zip bootstrap
+          zip -j ${{ env.PROJECT }}.zip bootstrap
 
       - name: Configure AWS Credentials (us-east-1)
         uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722
