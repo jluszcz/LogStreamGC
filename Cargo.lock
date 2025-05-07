@@ -1514,6 +1514,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lambda_utils"
+version = "0.1.0"
+source = "git+https://github.com//jluszcz/LambdaUtils-rs#dfa9b44f0847cc255bb2237a10d0b7bdca640926"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "fern",
+ "log",
+ "rustc_version",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1580,8 +1592,8 @@ dependencies = [
  "clap",
  "fern",
  "lambda_runtime",
+ "lambda_utils",
  "log",
- "rustc_version",
  "serde",
  "serde_json",
  "tokio",

@@ -5,40 +5,12 @@ use aws_sdk_cloudwatchlogs::Client;
 use aws_sdk_cloudwatchlogs::config::Region;
 use aws_sdk_cloudwatchlogs::types::{LogGroup, LogStream};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
-use log::{LevelFilter, debug, info, trace};
-use std::borrow::Cow;
+use log::{debug, info, trace};
+
+pub const APP_NAME: &str = "log-stream-gc";
 
 const MIN_ITEMS_FOR_PROGRESS_UPDATE: usize = 500;
 const ITEM_PROGRESS_INTERVAL: usize = 100;
-
-pub fn set_up_logger<T>(calling_module: T, verbose: bool) -> Result<()>
-where
-    T: Into<Cow<'static, str>>,
-{
-    let level = if verbose {
-        LevelFilter::Debug
-    } else {
-        LevelFilter::Info
-    };
-
-    let _ = fern::Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "{} [{}] [{}] {}",
-                chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ"),
-                record.target(),
-                record.level(),
-                message
-            ))
-        })
-        .level(LevelFilter::Warn)
-        .level_for("log_stream_gc", level)
-        .level_for(calling_module, level)
-        .chain(std::io::stdout())
-        .apply();
-
-    Ok(())
-}
 
 fn parse_timestamp(timestamp: i64) -> Option<DateTime<Utc>> {
     let secs = timestamp / 1000;
@@ -87,16 +59,15 @@ async fn describe_log_streams(client: &Client, log_group_name: &str) -> Result<V
             .set_next_token(next_token)
             .send()
             .await?;
-        debug!("Described log streams for {}", log_group_name);
+        debug!("Described log streams for {log_group_name}");
 
         log_streams.append(&mut describe_output.log_streams.unwrap_or_default());
 
         next_token = describe_output.next_token;
         if next_token.is_none() {
             info!(
-                "Found {} log stream(s) for {}",
-                log_streams.len(),
-                log_group_name
+                "Found {} log stream(s) for {log_group_name}",
+                log_streams.len()
             );
             break Ok(log_streams);
         }
@@ -122,32 +93,27 @@ async fn gc_log_stream(
 
     if log_stream_creation_date < *keep_from_date {
         debug!(
-            "{} {}/{} (creation date {} < {})",
+            "{} {log_group_name}/{log_stream_name} (creation date {log_stream_creation_date} < {keep_from_date})",
             if dry_run {
                 "Keeping (Dry-Run)"
             } else {
                 "Deleting"
-            },
-            log_group_name,
-            log_stream_name,
-            log_stream_creation_date,
-            keep_from_date
+            }
         );
 
         if !dry_run {
-            debug!("Deleting {}/{}", log_group_name, log_stream_name);
+            debug!("Deleting {log_group_name}/{log_stream_name}");
             client
                 .delete_log_stream()
                 .log_group_name(log_group_name)
                 .log_stream_name(log_stream_name)
                 .send()
                 .await?;
-            debug!("Deleted {}/{}", log_group_name, log_stream_name);
+            debug!("Deleted {log_group_name}/{log_stream_name}");
         }
     } else {
         debug!(
-            "Keeping {}/{} (creation date {} >= {})",
-            log_group_name, log_stream_name, log_stream_creation_date, keep_from_date
+            "Keeping {log_group_name}/{log_stream_name} (creation date {log_stream_creation_date} >= {keep_from_date})"
         );
     }
 
@@ -169,10 +135,7 @@ async fn gc_log_group(client: &Client, log_group: LogGroup, dry_run: bool) -> Re
         - Duration::try_days(2 * log_group_retention_period)
             .ok_or_else(|| anyhow!("Failed to create duration"))?;
 
-    debug!(
-        "Cleaning up {} from before {}",
-        log_group_name, keep_from_date
-    );
+    debug!("Cleaning up {log_group_name} from before {keep_from_date}");
 
     let log_streams = describe_log_streams(client, &log_group_name).await?;
     let log_stream_ct = log_streams.len();
@@ -189,10 +152,8 @@ async fn gc_log_group(client: &Client, log_group: LogGroup, dry_run: bool) -> Re
         if log_stream_ct > MIN_ITEMS_FOR_PROGRESS_UPDATE && (idx + 1) % ITEM_PROGRESS_INTERVAL == 0
         {
             info!(
-                "Cleaned up {}/{} log streams in {}",
+                "Cleaned up {}/{log_stream_ct} log streams in {log_group_name}",
                 idx + 1,
-                log_stream_ct,
-                log_group_name
             );
         }
     }

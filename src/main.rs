@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
+use lambda_utils::set_up_logger;
 use log::debug;
-use log_stream_gc::{gc_log_streams, set_up_logger};
+use log_stream_gc::{APP_NAME, gc_log_streams};
 
 #[derive(Debug)]
 struct Args {
@@ -57,8 +58,8 @@ fn parse_args() -> Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = parse_args();
-    set_up_logger(module_path!(), args.verbose)?;
-    debug!("{:?}", args);
+    set_up_logger(APP_NAME, module_path!(), args.verbose)?;
+    debug!("{args:?}");
 
     gc_log_streams(Some(args.region), args.dry_run).await
 }
