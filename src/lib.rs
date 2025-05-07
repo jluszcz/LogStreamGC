@@ -7,7 +7,7 @@ use aws_sdk_cloudwatchlogs::types::{LogGroup, LogStream};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use log::{debug, info, trace};
 
-pub const APP_NAME: &str = "log-stream-gc";
+pub const APP_NAME: &str = "log_stream_gc";
 
 const MIN_ITEMS_FOR_PROGRESS_UPDATE: usize = 500;
 const ITEM_PROGRESS_INTERVAL: usize = 100;
