@@ -36,26 +36,14 @@ resource "aws_lambda_permission" "cw_execution" {
   source_arn    = aws_cloudwatch_event_rule.schedule.arn
 }
 
-data "aws_iam_policy_document" "cw_actions" {
-  statement {
-    actions   = ["logs:Describe*", "logs:DeleteLogStream"]
-    resources = ["arn:aws:logs:${var.aws_region}:${var.aws_acct_id}:*"]
-  }
-}
-
 data "aws_iam_policy_document" "assume_role" {
   statement {
     principals {
-      type        = "Service"
+      type = "Service"
       identifiers = ["lambda.amazonaws.com"]
     }
     actions = ["sts:AssumeRole"]
   }
-}
-
-resource "aws_iam_policy" "role_policy" {
-  name   = "log-stream-gc-${var.aws_region}"
-  policy = data.aws_iam_policy_document.cw_actions.json
 }
 
 resource "aws_iam_role" "role" {
@@ -63,9 +51,43 @@ resource "aws_iam_role" "role" {
   assume_role_policy = data.aws_iam_policy_document.assume_role.json
 }
 
-resource "aws_iam_role_policy_attachment" "role_attachment" {
+data "aws_iam_policy_document" "logs" {
+  statement {
+    actions = ["logs:Describe*", "logs:DeleteLogStream"]
+    resources = ["arn:aws:logs:${var.aws_region}:${var.aws_acct_id}:*"]
+  }
+}
+
+resource "aws_iam_policy" "logs" {
+  name   = "log-stream-gc.logs.${var.aws_region}"
+  policy = data.aws_iam_policy_document.logs.json
+}
+
+resource "aws_iam_role_policy_attachment" "logs" {
   role       = aws_iam_role.role.name
-  policy_arn = aws_iam_policy.role_policy.arn
+  policy_arn = aws_iam_policy.logs.arn
+}
+
+data "aws_iam_policy_document" "cw" {
+  statement {
+    actions = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values = ["log_stream_gc"]
+    }
+  }
+}
+
+resource "aws_iam_policy" "cw" {
+  name   = "log-stream-gc.cw.${var.aws_region}"
+  policy = data.aws_iam_policy_document.cw.json
+}
+
+resource "aws_iam_role_policy_attachment" "cw" {
+  role       = aws_iam_role.role.name
+  policy_arn = aws_iam_policy.cw.arn
 }
 
 resource "aws_iam_role_policy_attachment" "basic_execution_role_attachment" {
