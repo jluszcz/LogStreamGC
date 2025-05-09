@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
-use lambda_utils::set_up_logger;
+use jluszcz_rust_utils::set_up_logger;
 use log::debug;
-use log_stream_gc::{APP_NAME, gc_log_streams};
+use log_stream_gc::{APP_NAME, gc_log_streams_in_region};
 
 #[derive(Debug)]
 struct Args {
@@ -61,5 +61,5 @@ async fn main() -> Result<()> {
     set_up_logger(APP_NAME, module_path!(), args.verbose)?;
     debug!("{args:?}");
 
-    gc_log_streams(Some(args.region), args.dry_run).await
+    gc_log_streams_in_region(args.region, args.dry_run).await
 }

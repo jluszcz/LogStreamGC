@@ -161,7 +161,15 @@ async fn gc_log_group(client: &Client, log_group: LogGroup, dry_run: bool) -> Re
     Ok(())
 }
 
-pub async fn gc_log_streams(region: Option<String>, dry_run: bool) -> Result<()> {
+pub async fn gc_log_streams(dry_run: bool) -> Result<()> {
+    inner_gc_log_streams(None, dry_run).await
+}
+
+pub async fn gc_log_streams_in_region(region: String, dry_run: bool) -> Result<()> {
+    inner_gc_log_streams(Some(region), dry_run).await
+}
+
+async fn inner_gc_log_streams(region: Option<String>, dry_run: bool) -> Result<()> {
     let mut config = ConfigLoader::default();
     if let Some(region) = region {
         config = config.region(Region::new(region));
