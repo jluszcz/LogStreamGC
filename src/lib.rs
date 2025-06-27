@@ -24,7 +24,7 @@ async fn describe_log_groups(client: &Client) -> Result<Vec<LogGroup>> {
     let mut log_groups = Vec::new();
 
     loop {
-        trace!("Describing log groups (next_token={:?})", next_token);
+        trace!("Describing log groups (next_token={next_token:?})");
 
         let describe_output = client
             .describe_log_groups()
@@ -48,10 +48,7 @@ async fn describe_log_streams(client: &Client, log_group_name: &str) -> Result<V
     let mut log_streams = Vec::new();
 
     loop {
-        trace!(
-            "Describing log streams for {} (next_token={:?})",
-            log_group_name, next_token
-        );
+        trace!("Describing log streams for {log_group_name} (next_token={next_token:?})");
 
         let describe_output = client
             .describe_log_streams()
