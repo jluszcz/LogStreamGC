@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(pre-commit:*)",
+      "Bash(git commit:*)",
+      "Bash(git add:*)",
+      "Bash(cargo fmt:*)"
+    ],
+    "deny": []
+  }
+}
