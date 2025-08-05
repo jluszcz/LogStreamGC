@@ -5,7 +5,8 @@
       "Bash(pre-commit:*)",
       "Bash(git commit:*)",
       "Bash(git add:*)",
-      "Bash(cargo fmt:*)"
+      "Bash(cargo fmt:*)",
+      "Bash(cargo:*)"
     ],
     "deny": []
   }

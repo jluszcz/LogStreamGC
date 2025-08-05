@@ -38,7 +38,7 @@ After making any changes, run the build/test commands above and make sure they p
 
 When fixing test failures, you MUST fix the test rather than remove tests. When in doubt, ask.
 
-Before committing code, run `pre-commit run` to verify that no pre-commit hooks will fail.
+Before committing code, run `pre-commit run -a` to verify that no pre-commit hooks will fail.
 
 ## Dependencies
 
