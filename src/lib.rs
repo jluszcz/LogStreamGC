@@ -73,7 +73,7 @@ async fn describe_log_groups_batched(
             .context("Failed to describe log groups")?;
 
         batch_count += 1;
-        debug!("Described log groups batch {}", batch_count);
+        debug!("Described log groups batch {batch_count}");
 
         let mut batch_groups = describe_output.log_groups.unwrap_or_default();
 
@@ -83,12 +83,12 @@ async fn describe_log_groups_batched(
                 let include_match = config
                     .include_pattern
                     .as_ref()
-                    .map_or(true, |pattern| pattern.is_match(name));
+                    .is_none_or(|pattern| pattern.is_match(name));
 
                 let exclude_match = config
                     .exclude_pattern
                     .as_ref()
-                    .map_or(false, |pattern| pattern.is_match(name));
+                    .is_some_and(|pattern| pattern.is_match(name));
 
                 include_match && !exclude_match
             } else {
@@ -103,7 +103,7 @@ async fn describe_log_groups_batched(
 
         next_token = describe_output.next_token;
         if next_token.is_none() {
-            info!("Found {} log group(s) after filtering", total_processed);
+            info!("Found {total_processed} log group(s) after filtering");
             break Ok(total_processed);
         }
     }
@@ -123,10 +123,7 @@ async fn describe_log_streams(client: &Client, log_group_name: &str) -> Result<V
             .send()
             .await
             .with_context(|| {
-                format!(
-                    "Failed to describe log streams for log group: {}",
-                    log_group_name
-                )
+                format!("Failed to describe log streams for log group: {log_group_name}")
             })?;
         debug!("Described log streams for {log_group_name}");
 
@@ -160,10 +157,7 @@ async fn gc_log_stream(
 
     let log_stream_creation_date = parse_timestamp(creation_time)
         .with_context(|| {
-            format!(
-                "Failed to parse creation time for log stream: {}",
-                log_stream_name
-            )
+            format!("Failed to parse creation time for log stream: {log_stream_name}")
         })?
         .date_naive();
 
@@ -181,10 +175,7 @@ async fn gc_log_stream(
             delete_log_stream_with_retry(client, log_group_name, log_stream_name)
                 .await
                 .with_context(|| {
-                    format!(
-                        "Failed to delete log stream: {}/{}",
-                        log_group_name, log_stream_name
-                    )
+                    format!("Failed to delete log stream: {log_group_name}/{log_stream_name}")
                 })?;
         }
     } else {
@@ -294,7 +285,6 @@ async fn gc_log_group(
     let stream_futures = stream::iter(log_streams.into_iter().enumerate())
         .map(|(idx, log_stream)| {
             let client = client.clone();
-            let keep_from_date = keep_from_date;
             let log_group_name = log_group_name.clone();
             let processed_counter = processed_counter.clone();
             let config = config.clone();
@@ -398,66 +388,10 @@ async fn inner_gc_log_streams(
     let mut batch_handles = Vec::new();
     let max_concurrent_batches = config.concurrency_limit.max(1);
 
-    // Process log groups in batches to reduce memory usage
+    // Collect all log groups first, then process them
+    let mut all_log_groups = Vec::new();
     let total_log_groups = describe_log_groups_batched(&client, config, |batch| {
-        let client = client.clone();
-        let config = config.clone();
-        let processed_counter = processed_counter.clone();
-        let total_streams = total_streams.clone();
-        let processed_groups = processed_groups.clone();
-
-        // Process batch in chunks based on config.batch_size
-        let batch_size = config.batch_size.min(batch.len()).max(1);
-        for chunk in batch.chunks(batch_size) {
-            let chunk = chunk.to_vec();
-            let handle = tokio::spawn({
-                let client = client.clone();
-                let config = config.clone();
-                let processed_counter = processed_counter.clone();
-                let total_streams = total_streams.clone();
-                let processed_groups = processed_groups.clone();
-
-                async move {
-                    for log_group in chunk {
-                        let log_group_name =
-                            log_group.log_group_name().unwrap_or("unknown").to_string();
-                        let group_num = processed_groups.fetch_add(1, Ordering::Relaxed) + 1;
-
-                        debug!(
-                            "Processing log group {} (group #{})",
-                            log_group_name, group_num
-                        );
-
-                        if let Err(e) = gc_log_group(
-                            &client,
-                            log_group,
-                            &config,
-                            dry_run,
-                            processed_counter.clone(),
-                            total_streams.clone(),
-                        )
-                        .await
-                        {
-                            warn!("Failed to process log group {}: {}", log_group_name, e);
-                        }
-
-                        // Yield to allow other tasks to run
-                        task::yield_now().await;
-                    }
-                }
-            });
-            batch_handles.push(handle);
-
-            // Apply backpressure: if we have too many concurrent batches, wait for some to complete
-            if batch_handles.len() >= max_concurrent_batches {
-                let (completed, _, remaining) = futures::future::select_all(batch_handles).await;
-                if let Err(e) = completed {
-                    warn!("Batch processing task failed: {}", e);
-                }
-                batch_handles = remaining;
-            }
-        }
-
+        all_log_groups.extend(batch);
         Ok(())
     })
     .await?;
@@ -465,6 +399,55 @@ async fn inner_gc_log_streams(
     if total_log_groups == 0 {
         info!("No log groups found matching the specified criteria");
         return Ok(());
+    }
+
+    // Process log groups in chunks with concurrency control
+    let batch_size = config.batch_size.min(all_log_groups.len()).max(1);
+    for chunk in all_log_groups.chunks(batch_size) {
+        let chunk = chunk.to_vec();
+        let handle = tokio::spawn({
+            let client = client.clone();
+            let config = config.clone();
+            let processed_counter = processed_counter.clone();
+            let total_streams = total_streams.clone();
+            let processed_groups = processed_groups.clone();
+
+            async move {
+                for log_group in chunk {
+                    let log_group_name =
+                        log_group.log_group_name().unwrap_or("unknown").to_string();
+                    let group_num = processed_groups.fetch_add(1, Ordering::Relaxed) + 1;
+
+                    debug!("Processing log group {log_group_name} (group #{group_num})");
+
+                    if let Err(e) = gc_log_group(
+                        &client,
+                        log_group,
+                        &config,
+                        dry_run,
+                        processed_counter.clone(),
+                        total_streams.clone(),
+                    )
+                    .await
+                    {
+                        warn!("Failed to process log group {log_group_name}: {e}");
+                    }
+
+                    // Yield to allow other tasks to run
+                    task::yield_now().await;
+                }
+            }
+        });
+        batch_handles.push(handle);
+
+        // Apply backpressure: if we have too many concurrent batches, wait for some to complete
+        if batch_handles.len() >= max_concurrent_batches {
+            let (completed, _, remaining) = futures::future::select_all(batch_handles).await;
+            if let Err(e) = completed {
+                warn!("Batch processing task failed: {e}");
+            }
+            batch_handles = remaining;
+        }
     }
 
     debug!(
@@ -475,7 +458,7 @@ async fn inner_gc_log_streams(
     // Wait for all batch processing tasks to complete
     for handle in batch_handles {
         if let Err(e) = handle.await {
-            warn!("Batch processing task failed: {}", e);
+            warn!("Batch processing task failed: {e}");
         }
     }
 
