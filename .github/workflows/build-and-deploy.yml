@@ -1,4 +1,4 @@
-name: Build and Test
+name: Build and Deploy
 
 on:
   push:
@@ -15,7 +15,7 @@ on:
       - main
 
 jobs:
-  build-and-test:
+  build-and-package:
     runs-on: ubuntu-24.04-arm
 
     env:
@@ -61,3 +61,25 @@ jobs:
           name: package
           path: ${{ env.PROJECT }}.zip
           retention-days: 1
+
+  deploy-us-east-1:
+    needs: build-and-package
+
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/deploy-lambda.yml
+    with:
+      aws-region: us-east-1
+    secrets:
+      aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
+      bucket-name: ${{ secrets.AWS_US_EAST_1_BUCKET }}
+
+  deploy-us-east-2:
+    needs: build-and-package
+
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/deploy-lambda.yml
+    with:
+      aws-region: us-east-2
+    secrets:
+      aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
+      bucket-name: ${{ secrets.AWS_US_EAST_2_BUCKET }}
