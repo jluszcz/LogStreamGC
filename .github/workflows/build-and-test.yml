@@ -15,7 +15,7 @@ on:
       - main
 
 jobs:
-  ci:
+  build-and-test:
     runs-on: ubuntu-24.04-arm
 
     env:
