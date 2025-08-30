@@ -1,0 +1,30 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["Build and Test"]
+
+    types:
+      - completed
+
+    branches:
+      - main
+
+jobs:
+  deploy-us-east-1:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    uses: ./.github/workflows/deploy-lambda.yml
+    with:
+      aws-region: us-east-1
+    secrets:
+      aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
+      bucket-name: ${{ secrets.AWS_US_EAST_1_BUCKET }}
+
+  deploy-us-east-2:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    uses: ./.github/workflows/deploy-lambda.yml
+    with:
+      aws-region: us-east-2
+    secrets:
+      aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
+      bucket-name: ${{ secrets.AWS_US_EAST_2_BUCKET }}

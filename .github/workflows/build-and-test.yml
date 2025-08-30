@@ -1,4 +1,4 @@
-name: Build and Deploy
+name: Build and Test
 
 on:
   push:
@@ -10,13 +10,16 @@ on:
       - 'Cargo**'
       - 'src/**/*.rs'
 
+  pull_request:
+    branches:
+      - main
+
 jobs:
-  build-and-package:
+  ci:
     runs-on: ubuntu-24.04-arm
 
     env:
       BUILD_TARGET: aarch64-unknown-linux-musl
-      PROJECT: log-stream-gc
 
     steps:
       - uses: actions/checkout@v4
@@ -44,34 +47,16 @@ jobs:
         run: cargo clippy --target ${{ env.BUILD_TARGET }} -- -D warnings
 
       - name: Package
+        if: github.event_name == 'push'
         run: |
           cargo build --release --target ${{ env.BUILD_TARGET }}
           cp target/${{ env.BUILD_TARGET }}/release/lambda bootstrap
           zip -j ${{ env.PROJECT }}.zip bootstrap
 
       - name: Upload Package
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: package
           path: ${{ env.PROJECT }}.zip
           retention-days: 1
-
-  deploy-us-east-1:
-    needs: build-and-package
-
-    uses: ./.github/workflows/deploy-lambda.yml
-    with:
-      aws-region: us-east-1
-    secrets:
-      aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
-      bucket-name: ${{ secrets.AWS_US_EAST_1_BUCKET }}
-
-  deploy-us-east-2:
-    needs: build-and-package
-
-    uses: ./.github/workflows/deploy-lambda.yml
-    with:
-      aws-region: us-east-2
-    secrets:
-      aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
-      bucket-name: ${{ secrets.AWS_US_EAST_2_BUCKET }}
