@@ -1,13 +1,13 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
-use jluszcz_rust_utils::set_up_logger;
+use jluszcz_rust_utils::{Verbosity, set_up_logger};
 use log::debug;
 use log_stream_gc::{APP_NAME, Config, gc_log_streams_with_config};
 use regex::Regex;
 
 #[derive(Debug)]
 struct Args {
-    verbose: bool,
+    verbosity: Verbosity,
     dry_run: bool,
     region: String,
     concurrency: usize,
@@ -24,11 +24,10 @@ fn parse_args() -> Result<Args> {
         .version("0.1")
         .author("Jacob Luszcz")
         .arg(
-            Arg::new("verbose")
+            Arg::new("verbosity")
                 .short('v')
-                .long("verbose")
-                .action(ArgAction::SetTrue)
-                .help("Verbose mode. Outputs DEBUG and higher log messages."),
+                .action(ArgAction::Count)
+                .help("Verbose mode. Use -v for DEBUG, -vv for TRACE level logging."),
         )
         .arg(
             Arg::new("dryrun")
@@ -96,7 +95,7 @@ fn parse_args() -> Result<Args> {
         )
         .get_matches();
 
-    let verbose = matches.get_flag("verbose");
+    let verbosity = matches.get_flag("verbosity").into();
     let dry_run = matches.get_flag("dryrun");
 
     let region = matches
@@ -154,7 +153,7 @@ fn parse_args() -> Result<Args> {
     }
 
     Ok(Args {
-        verbose,
+        verbosity,
         dry_run,
         region,
         concurrency,
@@ -170,7 +169,7 @@ fn parse_args() -> Result<Args> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = parse_args()?;
-    set_up_logger(APP_NAME, module_path!(), args.verbose)?;
+    set_up_logger(APP_NAME, module_path!(), args.verbosity)?;
     debug!("{args:?}");
 
     // Build regex patterns if provided
