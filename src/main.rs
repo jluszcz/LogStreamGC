@@ -95,7 +95,7 @@ fn parse_args() -> Result<Args> {
         )
         .get_matches();
 
-    let verbosity = matches.get_flag("verbosity").into();
+    let verbosity = matches.get_count("verbosity").into();
     let dry_run = matches.get_flag("dryrun");
 
     let region = matches
