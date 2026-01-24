@@ -43,7 +43,7 @@ resource "aws_lambda_permission" "cw_execution" {
 data "aws_iam_policy_document" "assume_role" {
   statement {
     principals {
-      type = "Service"
+      type        = "Service"
       identifiers = ["lambda.amazonaws.com"]
     }
     actions = ["sts:AssumeRole"]
@@ -57,7 +57,7 @@ resource "aws_iam_role" "role" {
 
 data "aws_iam_policy_document" "logs" {
   statement {
-    actions = ["logs:Describe*", "logs:DeleteLogStream"]
+    actions   = ["logs:Describe*", "logs:DeleteLogStream"]
     resources = ["arn:aws:logs:${var.aws_region}:${var.aws_acct_id}:*"]
   }
 }
@@ -74,12 +74,12 @@ resource "aws_iam_role_policy_attachment" "logs" {
 
 data "aws_iam_policy_document" "cw" {
   statement {
-    actions = ["cloudwatch:PutMetricData"]
+    actions   = ["cloudwatch:PutMetricData"]
     resources = ["*"]
     condition {
       test     = "StringEquals"
       variable = "cloudwatch:namespace"
-      values = ["log_stream_gc"]
+      values   = ["log_stream_gc"]
     }
   }
 }
@@ -101,7 +101,7 @@ resource "aws_iam_role_policy_attachment" "basic_execution_role_attachment" {
 
 resource "aws_lambda_function" "log_stream_gc" {
   function_name = "log-stream-gc"
-  s3_bucket     = "${data.aws_s3_bucket.code_bucket.bucket}"
+  s3_bucket     = data.aws_s3_bucket.code_bucket.bucket
   s3_key        = "log-stream-gc.zip"
   role          = aws_iam_role.role.arn
   architectures = ["arm64"]
@@ -124,7 +124,7 @@ data "aws_iam_openid_connect_provider" "github" {
 
 data "aws_iam_policy_document" "github" {
   statement {
-    actions = ["s3:PutObject"]
+    actions   = ["s3:PutObject"]
     resources = ["${data.aws_s3_bucket.code_bucket.arn}/log-stream-gc.zip"]
   }
 }
@@ -143,7 +143,7 @@ resource "aws_iam_role" "github" {
       {
         Effect = "Allow",
         Principal = {
-          Federated = "${data.aws_iam_openid_connect_provider.github.arn}"
+          Federated = data.aws_iam_openid_connect_provider.github.arn
         },
         Action = "sts:AssumeRoleWithWebIdentity",
         Condition = {
