@@ -71,7 +71,6 @@ jobs:
       aws-region: us-east-1
     secrets:
       aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
-      bucket-name: ${{ secrets.AWS_US_EAST_1_BUCKET }}
 
   deploy-us-east-2:
     needs: build-and-package
@@ -82,4 +81,3 @@ jobs:
       aws-region: us-east-2
     secrets:
       aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
-      bucket-name: ${{ secrets.AWS_US_EAST_2_BUCKET }}
