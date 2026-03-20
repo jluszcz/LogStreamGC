@@ -8,14 +8,12 @@ on:
         type: string
 
     secrets:
-      bucket-name:
-        required: true
-
       aws-account-id:
         required: true
 
 env:
   PROJECT: log-stream-gc
+  BUCKET_NAME: code-${{ secrets.aws-account-id }}-${{ inputs.aws-region }}-an
 
 jobs:
   deploy:
@@ -41,4 +39,4 @@ jobs:
       - name: Deploy Lambda
         env:
           AWS_DEFAULT_REGION: ${{ inputs.aws-region }}
-        run: aws s3 cp ${{ env.PROJECT }}.zip s3://${{ secrets.bucket-name }}/
+        run: aws s3 cp ${{ env.PROJECT }}.zip s3://${{ env.BUCKET_NAME }}/

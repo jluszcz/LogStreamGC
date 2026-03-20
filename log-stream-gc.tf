@@ -7,18 +7,16 @@ terraform {
 }
 
 # Sourced from environment variables named TF_VAR_${VAR_NAME}
-variable "aws_acct_id" {}
-
 variable "aws_region" {}
-
-variable "code_bucket" {}
 
 provider "aws" {
   region = var.aws_region
 }
 
+data "aws_caller_identity" "current" {}
+
 data "aws_s3_bucket" "code_bucket" {
-  bucket = var.code_bucket
+  bucket = format("code-%s-%s-an", data.aws_caller_identity.current.account_id, var.aws_region)
 }
 
 // Run daily
@@ -58,7 +56,7 @@ resource "aws_iam_role" "role" {
 data "aws_iam_policy_document" "logs" {
   statement {
     actions   = ["logs:Describe*", "logs:DeleteLogStream"]
-    resources = ["arn:aws:logs:${var.aws_region}:${var.aws_acct_id}:*"]
+    resources = ["arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"]
   }
 }
 
