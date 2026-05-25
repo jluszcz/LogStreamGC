@@ -1,25 +1,37 @@
 use anyhow::Result;
-use clap::{Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, Command, value_parser};
 use jluszcz_rust_utils::{Verbosity, set_up_logger};
 use log::debug;
-use log_stream_gc::{APP_NAME, Config, gc_log_streams_with_config};
+use log_stream_gc::{APP_NAME, Config, gc_log_streams};
 use regex::Regex;
 
-#[derive(Debug)]
-struct Args {
-    verbosity: Verbosity,
-    dry_run: bool,
-    region: String,
-    concurrency: usize,
-    progress_threshold: usize,
-    progress_interval: usize,
-    retention_multiplier: f64,
-    batch_size: usize,
-    include_pattern: Option<String>,
-    exclude_pattern: Option<String>,
+fn parse_non_zero_usize(s: &str) -> Result<usize, String> {
+    let v: usize = s
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
+    if v == 0 {
+        Err("must be greater than 0".into())
+    } else {
+        Ok(v)
+    }
 }
 
-fn parse_args() -> Result<Args> {
+fn parse_positive_f64(s: &str) -> Result<f64, String> {
+    let v: f64 = s
+        .parse()
+        .map_err(|e: std::num::ParseFloatError| e.to_string())?;
+    if v <= 0.0 {
+        Err("must be greater than 0".into())
+    } else {
+        Ok(v)
+    }
+}
+
+fn parse_regex(s: &str) -> Result<Regex, String> {
+    Regex::new(s).map_err(|e| e.to_string())
+}
+
+fn parse_args() -> Result<(Verbosity, bool, String, Config)> {
     let matches = Command::new("log-stream-gc")
         .version("0.1")
         .author("Jacob Luszcz")
@@ -51,6 +63,7 @@ fn parse_args() -> Result<Args> {
                 .long("concurrency")
                 .value_name("NUM")
                 .default_value("10")
+                .value_parser(parse_non_zero_usize)
                 .help("Number of concurrent log stream deletions."),
         )
         .arg(
@@ -58,6 +71,7 @@ fn parse_args() -> Result<Args> {
                 .long("progress-threshold")
                 .value_name("NUM")
                 .default_value("500")
+                .value_parser(value_parser!(usize))
                 .help("Minimum number of log streams before showing progress updates."),
         )
         .arg(
@@ -65,6 +79,7 @@ fn parse_args() -> Result<Args> {
                 .long("progress-interval")
                 .value_name("NUM")
                 .default_value("100")
+                .value_parser(parse_non_zero_usize)
                 .help("Show progress every N log streams."),
         )
         .arg(
@@ -72,6 +87,7 @@ fn parse_args() -> Result<Args> {
                 .long("retention-multiplier")
                 .value_name("NUM")
                 .default_value("2.0")
+                .value_parser(parse_positive_f64)
                 .help("Multiplier for retention period (e.g., 2.0 = 2x retention period)."),
         )
         .arg(
@@ -79,127 +95,47 @@ fn parse_args() -> Result<Args> {
                 .long("batch-size")
                 .value_name("NUM")
                 .default_value("50")
-                .help("Number of log groups to process in each batch."),
+                .value_parser(parse_non_zero_usize)
+                .help("Log groups requested per AWS page (clamped to 1-50, the API limit)."),
         )
         .arg(
             Arg::new("include-pattern")
                 .long("include-pattern")
                 .value_name("REGEX")
+                .value_parser(parse_regex)
                 .help("Only process log groups matching this regex pattern."),
         )
         .arg(
             Arg::new("exclude-pattern")
                 .long("exclude-pattern")
                 .value_name("REGEX")
+                .value_parser(parse_regex)
                 .help("Skip log groups matching this regex pattern."),
         )
         .get_matches();
 
     let verbosity = matches.get_count("verbosity").into();
     let dry_run = matches.get_flag("dryrun");
+    let region = matches.get_one::<String>("region").unwrap().to_string();
 
-    let region = matches
-        .get_one::<String>("region")
-        .expect("region is required")
-        .to_string();
+    let config = Config {
+        concurrency_limit: *matches.get_one("concurrency").unwrap(),
+        progress_threshold: *matches.get_one("progress-threshold").unwrap(),
+        progress_interval: *matches.get_one("progress-interval").unwrap(),
+        retention_multiplier: *matches.get_one("retention-multiplier").unwrap(),
+        batch_size: *matches.get_one("batch-size").unwrap(),
+        include_pattern: matches.get_one::<Regex>("include-pattern").cloned(),
+        exclude_pattern: matches.get_one::<Regex>("exclude-pattern").cloned(),
+    };
 
-    let concurrency = matches
-        .get_one::<String>("concurrency")
-        .unwrap()
-        .parse::<usize>()
-        .map_err(|_| anyhow::anyhow!("Invalid concurrency value"))?;
-
-    let progress_threshold = matches
-        .get_one::<String>("progress-threshold")
-        .unwrap()
-        .parse::<usize>()
-        .map_err(|_| anyhow::anyhow!("Invalid progress-threshold value"))?;
-
-    let progress_interval = matches
-        .get_one::<String>("progress-interval")
-        .unwrap()
-        .parse::<usize>()
-        .map_err(|_| anyhow::anyhow!("Invalid progress-interval value"))?;
-
-    let retention_multiplier = matches
-        .get_one::<String>("retention-multiplier")
-        .unwrap()
-        .parse::<f64>()
-        .map_err(|_| anyhow::anyhow!("Invalid retention-multiplier value"))?;
-
-    let batch_size = matches
-        .get_one::<String>("batch-size")
-        .unwrap()
-        .parse::<usize>()
-        .map_err(|_| anyhow::anyhow!("Invalid batch-size value"))?;
-
-    let include_pattern = matches.get_one::<String>("include-pattern").cloned();
-    let exclude_pattern = matches.get_one::<String>("exclude-pattern").cloned();
-
-    // Validate numeric values
-    if concurrency == 0 {
-        return Err(anyhow::anyhow!("Concurrency must be greater than 0"));
-    }
-    if progress_interval == 0 {
-        return Err(anyhow::anyhow!("Progress interval must be greater than 0"));
-    }
-    if retention_multiplier <= 0.0 {
-        return Err(anyhow::anyhow!(
-            "Retention multiplier must be greater than 0"
-        ));
-    }
-    if batch_size == 0 {
-        return Err(anyhow::anyhow!("Batch size must be greater than 0"));
-    }
-
-    Ok(Args {
-        verbosity,
-        dry_run,
-        region,
-        concurrency,
-        progress_threshold,
-        progress_interval,
-        retention_multiplier,
-        batch_size,
-        include_pattern,
-        exclude_pattern,
-    })
+    Ok((verbosity, dry_run, region, config))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = parse_args()?;
-    set_up_logger(APP_NAME, module_path!(), args.verbosity)?;
-    debug!("{args:?}");
+    let (verbosity, dry_run, region, config) = parse_args()?;
+    set_up_logger(APP_NAME, module_path!(), verbosity)?;
+    debug!("region={region} dry_run={dry_run} config={config:?}");
 
-    // Build regex patterns if provided
-    let include_pattern = if let Some(pattern) = args.include_pattern {
-        Some(
-            Regex::new(&pattern)
-                .map_err(|e| anyhow::anyhow!("Invalid include pattern regex: {}", e))?,
-        )
-    } else {
-        None
-    };
-
-    let exclude_pattern = if let Some(pattern) = args.exclude_pattern {
-        Some(
-            Regex::new(&pattern)
-                .map_err(|e| anyhow::anyhow!("Invalid exclude pattern regex: {}", e))?,
-        )
-    } else {
-        None
-    };
-
-    let config = Config {
-        concurrency_limit: args.concurrency,
-        progress_threshold: args.progress_threshold,
-        progress_interval: args.progress_interval,
-        retention_multiplier: args.retention_multiplier,
-        batch_size: args.batch_size,
-        include_pattern,
-        exclude_pattern,
-    };
-
-    gc_log_streams_with_config(Some(args.region), &config, args.dry_run).await
+    gc_log_streams(Some(region), config, dry_run).await
 }

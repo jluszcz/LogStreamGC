@@ -53,60 +53,29 @@ fn parse_timestamp(timestamp: i64) -> Result<DateTime<Utc>> {
         .ok_or_else(|| anyhow!("Failed to parse timestamp: {}", timestamp))
 }
 
-async fn describe_log_groups_batched(
-    client: &Client,
-    config: &Config,
-    mut callback: impl FnMut(Vec<LogGroup>) -> Result<()>,
-) -> Result<usize> {
-    let mut next_token = None;
-    let mut total_processed = 0;
-    let mut batch_count = 0;
+fn should_process_log_group(group: &LogGroup, config: &Config) -> bool {
+    let Some(name) = group.log_group_name() else {
+        return false;
+    };
 
-    loop {
-        trace!("Describing log groups (next_token={next_token:?})");
-
-        let describe_output = client
-            .describe_log_groups()
-            .set_next_token(next_token)
-            .send()
-            .await
-            .context("Failed to describe log groups")?;
-
-        batch_count += 1;
-        debug!("Described log groups batch {batch_count}");
-
-        let mut batch_groups = describe_output.log_groups.unwrap_or_default();
-
-        // Apply filtering
-        batch_groups.retain(|group| {
-            if let Some(name) = group.log_group_name() {
-                let include_match = config
-                    .include_pattern
-                    .as_ref()
-                    .is_none_or(|pattern| pattern.is_match(name));
-
-                let exclude_match = config
-                    .exclude_pattern
-                    .as_ref()
-                    .is_some_and(|pattern| pattern.is_match(name));
-
-                include_match && !exclude_match
-            } else {
-                false
-            }
-        });
-
-        if !batch_groups.is_empty() {
-            total_processed += batch_groups.len();
-            callback(batch_groups)?;
-        }
-
-        next_token = describe_output.next_token;
-        if next_token.is_none() {
-            info!("Found {total_processed} log group(s) after filtering");
-            break Ok(total_processed);
-        }
+    // Skip log groups without a positive retention — there's no cutoff date to compute.
+    if !matches!(group.retention_in_days(), Some(days) if days > 0) {
+        return false;
     }
+
+    let include_match = config
+        .include_pattern
+        .as_ref()
+        .is_none_or(|pattern| pattern.is_match(name));
+    if !include_match {
+        return false;
+    }
+
+    let exclude_match = config
+        .exclude_pattern
+        .as_ref()
+        .is_some_and(|pattern| pattern.is_match(name));
+    !exclude_match
 }
 
 async fn describe_log_streams(client: &Client, log_group_name: &str) -> Result<Vec<LogStream>> {
@@ -195,7 +164,8 @@ async fn delete_log_stream_with_retry(
     const MAX_RETRIES: u32 = 5;
     const BASE_DELAY_MS: u64 = 100;
 
-    for attempt in 0..=MAX_RETRIES {
+    let mut attempt: u32 = 0;
+    loop {
         match client
             .delete_log_stream()
             .log_group_name(log_group_name)
@@ -208,32 +178,25 @@ async fn delete_log_stream_with_retry(
                 return Ok(());
             }
             Err(err) => {
-                if attempt == MAX_RETRIES {
+                let error_message = err.to_string().to_lowercase();
+                let is_throttle =
+                    error_message.contains("throttl") || error_message.contains("rate");
+
+                if !is_throttle || attempt >= MAX_RETRIES {
                     return Err(anyhow::Error::from(err));
                 }
 
-                // Check if it's a throttling error that we should retry
-                let error_message = err.to_string().to_lowercase();
-                if error_message.contains("throttl") || error_message.contains("rate") {
-                    let delay_ms = BASE_DELAY_MS * 2_u64.pow(attempt);
-                    warn!(
-                        "Throttling detected for {}/{}, retrying in {}ms (attempt {}/{})",
-                        log_group_name,
-                        log_stream_name,
-                        delay_ms,
-                        attempt + 1,
-                        MAX_RETRIES + 1
-                    );
-                    sleep(TokioDuration::from_millis(delay_ms)).await;
-                } else {
-                    // For non-throttling errors, fail immediately
-                    return Err(anyhow::Error::from(err));
-                }
+                let delay_ms = BASE_DELAY_MS * 2_u64.pow(attempt);
+                warn!(
+                    "Throttling detected for {log_group_name}/{log_stream_name}, retrying in {delay_ms}ms (attempt {}/{})",
+                    attempt + 1,
+                    MAX_RETRIES + 1
+                );
+                sleep(TokioDuration::from_millis(delay_ms)).await;
+                attempt += 1;
             }
         }
     }
-
-    unreachable!("Loop should have returned by now")
 }
 
 async fn gc_log_group(
@@ -249,18 +212,11 @@ async fn gc_log_group(
         .ok_or_else(|| anyhow!("Log group is missing a name"))?
         .to_string();
 
+    // Invariant: callers filter via `should_process_log_group`, which guarantees positive retention.
     let log_group_retention_period: i64 = log_group
         .retention_in_days()
-        .ok_or_else(|| anyhow!("Log group {} is missing a retention period", log_group_name))?
+        .expect("log group passed should_process_log_group filter")
         .into();
-
-    if log_group_retention_period <= 0 {
-        return Err(anyhow!(
-            "Invalid retention period {} for log group {}",
-            log_group_retention_period,
-            log_group_name
-        ));
-    }
 
     let retention_days = (log_group_retention_period as f64 * config.retention_multiplier) as i64;
     let keep_from_date = Utc::now().date_naive()
@@ -281,13 +237,16 @@ async fn gc_log_group(
         return Ok(());
     }
 
+    let progress_threshold = config.progress_threshold;
+    let progress_interval = config.progress_interval;
+    let concurrency_limit = config.concurrency_limit;
+
     let start_time = Instant::now();
     let stream_futures = stream::iter(log_streams.into_iter().enumerate())
         .map(|(idx, log_stream)| {
             let client = client.clone();
             let log_group_name = log_group_name.clone();
             let processed_counter = processed_counter.clone();
-            let config = config.clone();
 
             async move {
                 let result = gc_log_stream(
@@ -296,23 +255,25 @@ async fn gc_log_group(
                     &log_group_name,
                     log_stream,
                     dry_run,
-                ).await;
+                )
+                .await;
 
                 let processed = processed_counter.fetch_add(1, Ordering::Relaxed) + 1;
 
-                if log_stream_ct > config.progress_threshold && (idx + 1) % config.progress_interval == 0 {
+                if log_stream_ct > progress_threshold && (idx + 1) % progress_interval == 0 {
                     let elapsed = start_time.elapsed();
                     let rate = processed as f64 / elapsed.as_secs_f64();
                     info!(
                         "Processed {}/{log_stream_ct} log streams in {log_group_name} ({:.1} streams/sec)",
-                        idx + 1, rate
+                        idx + 1,
+                        rate
                     );
                 }
 
                 result
             }
         })
-        .buffer_unordered(config.concurrency_limit);
+        .buffer_unordered(concurrency_limit);
 
     let results: Vec<Result<()>> = stream_futures.collect().await;
 
@@ -345,41 +306,19 @@ async fn gc_log_group(
     Ok(())
 }
 
-pub async fn gc_log_streams(dry_run: bool) -> Result<()> {
-    let config = Config::default();
-    inner_gc_log_streams(None, &config, dry_run).await
-}
-
-pub async fn gc_log_streams_in_region(region: String, dry_run: bool) -> Result<()> {
-    let config = Config::default();
-    inner_gc_log_streams(Some(region), &config, dry_run).await
-}
-
-pub async fn gc_log_streams_with_config(
-    region: Option<String>,
-    config: &Config,
-    dry_run: bool,
-) -> Result<()> {
-    inner_gc_log_streams(region, config, dry_run).await
-}
-
-async fn inner_gc_log_streams(
-    region: Option<String>,
-    config: &Config,
-    dry_run: bool,
-) -> Result<()> {
+pub async fn gc_log_streams(region: Option<String>, config: Config, dry_run: bool) -> Result<()> {
     let mut aws_config = ConfigLoader::default();
     if let Some(region) = region {
         aws_config = aws_config.region(Region::new(region));
     }
 
-    // Use standard retry config now that we handle throttling properly in delete_log_stream_with_retry
     let aws_config = aws_config
         .retry_config(RetryConfig::standard())
         .load()
         .await;
 
     let client = Client::new(&aws_config);
+    let config = Arc::new(config);
 
     let processed_counter = Arc::new(AtomicUsize::new(0));
     let total_streams = Arc::new(AtomicUsize::new(0));
@@ -387,67 +326,92 @@ async fn inner_gc_log_streams(
     let start_time = Instant::now();
     let mut batch_handles = Vec::new();
     let max_concurrent_batches = config.concurrency_limit.max(1);
+    let page_limit = config.batch_size.clamp(1, 50) as i32;
 
-    // Collect all log groups first, then process them
-    let mut all_log_groups = Vec::new();
-    let total_log_groups = describe_log_groups_batched(&client, config, |batch| {
-        all_log_groups.extend(batch);
-        Ok(())
-    })
-    .await?;
+    let mut next_token: Option<String> = None;
+    let mut total_log_groups: usize = 0;
+    let mut page_count: usize = 0;
+
+    loop {
+        trace!("Describing log groups (next_token={next_token:?})");
+
+        let output = client
+            .describe_log_groups()
+            .limit(page_limit)
+            .set_next_token(next_token)
+            .send()
+            .await
+            .context("Failed to describe log groups")?;
+
+        page_count += 1;
+
+        let mut batch = output.log_groups.unwrap_or_default();
+        let before_filter = batch.len();
+        batch.retain(|g| should_process_log_group(g, &config));
+        let filtered_out = before_filter - batch.len();
+
+        debug!(
+            "Described log groups page {page_count}: {} kept, {filtered_out} filtered",
+            batch.len()
+        );
+
+        if !batch.is_empty() {
+            total_log_groups += batch.len();
+
+            let handle = tokio::spawn({
+                let client = client.clone();
+                let config = Arc::clone(&config);
+                let processed_counter = processed_counter.clone();
+                let total_streams = total_streams.clone();
+                let processed_groups = processed_groups.clone();
+
+                async move {
+                    for log_group in batch {
+                        let log_group_name =
+                            log_group.log_group_name().unwrap_or("unknown").to_string();
+                        let group_num = processed_groups.fetch_add(1, Ordering::Relaxed) + 1;
+
+                        debug!("Processing log group {log_group_name} (group #{group_num})");
+
+                        if let Err(e) = gc_log_group(
+                            &client,
+                            log_group,
+                            &config,
+                            dry_run,
+                            processed_counter.clone(),
+                            total_streams.clone(),
+                        )
+                        .await
+                        {
+                            warn!("Failed to process log group {log_group_name}: {e}");
+                        }
+
+                        task::yield_now().await;
+                    }
+                }
+            });
+            batch_handles.push(handle);
+
+            if batch_handles.len() >= max_concurrent_batches {
+                let (completed, _, remaining) = futures::future::select_all(batch_handles).await;
+                if let Err(e) = completed {
+                    warn!("Batch processing task failed: {e}");
+                }
+                batch_handles = remaining;
+            }
+        }
+
+        next_token = output.next_token;
+        if next_token.is_none() {
+            break;
+        }
+    }
+
+    info!("Found {total_log_groups} log group(s) after filtering");
 
     if total_log_groups == 0 {
         info!("No log groups found matching the specified criteria");
         return Ok(());
-    }
-
-    // Process log groups in chunks with concurrency control
-    let batch_size = config.batch_size.min(all_log_groups.len()).max(1);
-    for chunk in all_log_groups.chunks(batch_size) {
-        let chunk = chunk.to_vec();
-        let handle = tokio::spawn({
-            let client = client.clone();
-            let config = config.clone();
-            let processed_counter = processed_counter.clone();
-            let total_streams = total_streams.clone();
-            let processed_groups = processed_groups.clone();
-
-            async move {
-                for log_group in chunk {
-                    let log_group_name =
-                        log_group.log_group_name().unwrap_or("unknown").to_string();
-                    let group_num = processed_groups.fetch_add(1, Ordering::Relaxed) + 1;
-
-                    debug!("Processing log group {log_group_name} (group #{group_num})");
-
-                    if let Err(e) = gc_log_group(
-                        &client,
-                        log_group,
-                        &config,
-                        dry_run,
-                        processed_counter.clone(),
-                        total_streams.clone(),
-                    )
-                    .await
-                    {
-                        warn!("Failed to process log group {log_group_name}: {e}");
-                    }
-
-                    // Yield to allow other tasks to run
-                    task::yield_now().await;
-                }
-            }
-        });
-        batch_handles.push(handle);
-
-        // Apply backpressure: if we have too many concurrent batches, wait for some to complete
-        if batch_handles.len() >= max_concurrent_batches {
-            let (completed, _, remaining) = futures::future::select_all(batch_handles).await;
-            if let Err(e) = completed {
-                warn!("Batch processing task failed: {e}");
-            }
-            batch_handles = remaining;
-        }
     }
 
     debug!(
@@ -455,7 +419,6 @@ async fn inner_gc_log_streams(
         batch_handles.len()
     );
 
-    // Wait for all batch processing tasks to complete
     for handle in batch_handles {
         if let Err(e) = handle.await {
             warn!("Batch processing task failed: {e}");
@@ -480,4 +443,97 @@ async fn inner_gc_log_streams(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_log_group(name: &str, retention: Option<i32>) -> LogGroup {
+        let mut builder = LogGroup::builder().log_group_name(name);
+        if let Some(r) = retention {
+            builder = builder.retention_in_days(r);
+        }
+        builder.build()
+    }
+
+    #[test]
+    fn parse_timestamp_valid() {
+        // 2024-01-01T00:00:00Z = 1_704_067_200 seconds = 1_704_067_200_000 ms
+        let dt = parse_timestamp(1_704_067_200_000).unwrap();
+        assert_eq!(dt.timestamp(), 1_704_067_200);
+        assert_eq!(dt.date_naive().to_string(), "2024-01-01");
+    }
+
+    #[test]
+    fn parse_timestamp_zero() {
+        let dt = parse_timestamp(0).unwrap();
+        assert_eq!(dt.timestamp(), 0);
+    }
+
+    #[test]
+    fn parse_timestamp_negative() {
+        assert!(parse_timestamp(-1).is_err());
+    }
+
+    #[test]
+    fn parse_timestamp_preserves_millis() {
+        let dt = parse_timestamp(1_704_067_200_123).unwrap();
+        assert_eq!(dt.timestamp_subsec_millis(), 123);
+    }
+
+    #[test]
+    fn filter_skips_log_group_without_retention() {
+        let group = make_log_group("foo", None);
+        assert!(!should_process_log_group(&group, &Config::default()));
+    }
+
+    #[test]
+    fn filter_skips_log_group_with_zero_retention() {
+        let group = make_log_group("foo", Some(0));
+        assert!(!should_process_log_group(&group, &Config::default()));
+    }
+
+    #[test]
+    fn filter_skips_log_group_with_negative_retention() {
+        let group = make_log_group("foo", Some(-1));
+        assert!(!should_process_log_group(&group, &Config::default()));
+    }
+
+    #[test]
+    fn filter_keeps_log_group_with_positive_retention() {
+        let group = make_log_group("foo", Some(7));
+        assert!(should_process_log_group(&group, &Config::default()));
+    }
+
+    #[test]
+    fn filter_applies_include_pattern() {
+        let group = make_log_group("/aws/lambda/foo", Some(7));
+
+        let mut config = Config::default();
+        config.include_pattern = Some(Regex::new(r"^/aws/lambda/").unwrap());
+        assert!(should_process_log_group(&group, &config));
+
+        config.include_pattern = Some(Regex::new(r"^/aws/ecs/").unwrap());
+        assert!(!should_process_log_group(&group, &config));
+    }
+
+    #[test]
+    fn filter_applies_exclude_pattern() {
+        let group = make_log_group("/aws/lambda/foo", Some(7));
+
+        let mut config = Config::default();
+        config.exclude_pattern = Some(Regex::new(r"^/aws/lambda/").unwrap());
+        assert!(!should_process_log_group(&group, &config));
+    }
+
+    #[test]
+    fn filter_exclude_overrides_include() {
+        let group = make_log_group("/aws/lambda/foo", Some(7));
+
+        let mut config = Config::default();
+        config.include_pattern = Some(Regex::new(r"^/aws/").unwrap());
+        config.exclude_pattern = Some(Regex::new(r"foo$").unwrap());
+        assert!(!should_process_log_group(&group, &config));
+    }
 }
