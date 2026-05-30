@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+
+export TF_VAR_aws_region="us-east-2"
+terraform workspace select log-stream-gc_us-east-2
