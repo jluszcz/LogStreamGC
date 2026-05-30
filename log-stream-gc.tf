@@ -70,28 +70,6 @@ resource "aws_iam_role_policy_attachment" "logs" {
   policy_arn = aws_iam_policy.logs.arn
 }
 
-data "aws_iam_policy_document" "cw" {
-  statement {
-    actions   = ["cloudwatch:PutMetricData"]
-    resources = ["*"]
-    condition {
-      test     = "StringEquals"
-      variable = "cloudwatch:namespace"
-      values   = ["log_stream_gc"]
-    }
-  }
-}
-
-resource "aws_iam_policy" "cw" {
-  name   = "log-stream-gc.cw.${var.aws_region}"
-  policy = data.aws_iam_policy_document.cw.json
-}
-
-resource "aws_iam_role_policy_attachment" "cw" {
-  role       = aws_iam_role.role.name
-  policy_arn = aws_iam_policy.cw.arn
-}
-
 resource "aws_iam_role_policy_attachment" "basic_execution_role_attachment" {
   role       = aws_iam_role.role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
