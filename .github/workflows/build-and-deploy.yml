@@ -45,7 +45,7 @@ jobs:
         run: cargo test --target ${{ env.BUILD_TARGET }}
 
       - name: Lint
-        run: cargo clippy --target ${{ env.BUILD_TARGET }} -- -D warnings
+        run: cargo clippy --target ${{ env.BUILD_TARGET }} --all-targets -- -D warnings
 
       - name: Package
         if: github.event_name == 'push'

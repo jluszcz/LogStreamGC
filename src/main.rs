@@ -32,8 +32,9 @@ fn parse_regex(s: &str) -> Result<Regex, String> {
 }
 
 fn parse_args() -> Result<(Verbosity, bool, String, Config)> {
+    // The default_value strings below must match Config::default() in lib.rs.
     let matches = Command::new("log-stream-gc")
-        .version("0.1")
+        .version(env!("CARGO_PKG_VERSION"))
         .author("Jacob Luszcz")
         .arg(
             Arg::new("verbosity")
@@ -64,7 +65,7 @@ fn parse_args() -> Result<(Verbosity, bool, String, Config)> {
                 .value_name("NUM")
                 .default_value("10")
                 .value_parser(parse_non_zero_usize)
-                .help("Number of concurrent log stream deletions."),
+                .help("Maximum number of concurrent log stream deletions across all log groups."),
         )
         .arg(
             Arg::new("progress-threshold")
