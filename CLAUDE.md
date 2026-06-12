@@ -17,10 +17,10 @@ The project has a dual-binary structure:
 
 The core algorithm:
 
-1. Enumerates all CloudWatch log groups in a region
-2. For each log group, calculates a cutoff date (2× the retention period)
-3. Deletes log streams created before the cutoff date
-4. Uses AWS SDK with retry configuration (25 max attempts) to handle throttling
+1. Enumerates all CloudWatch log groups in a region (optionally filtered by include/exclude regex)
+2. For each log group, calculates a cutoff date (retention period × a configurable multiplier, default 2×)
+3. Deletes log streams created before the cutoff date, with a global concurrency limit on deletions
+4. Uses the AWS SDK's standard retry configuration (10 max attempts) to handle throttling
 
 ## Development Commands
 
@@ -30,7 +30,7 @@ The core algorithm:
 - `cargo fmt` - Format the source code
 - `cargo test` - Run all tests
 - `cargo check` - Check for compilation errors without building
-- `cargo clippy -- -D warnings` - Run Rust linter for code quality checks
+- `cargo clippy --all-targets -- -D warnings` - Run Rust linter for code quality checks (includes test code)
 
 ## Dependencies
 
