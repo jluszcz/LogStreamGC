@@ -30,7 +30,7 @@ jobs:
           name: package
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v6.0.0
+        uses: aws-actions/configure-aws-credentials@v6.2.1
         with:
           role-to-assume: arn:aws:iam::${{ secrets.aws-account-id }}:role/${{ env.PROJECT }}.github.${{ inputs.aws-region }}
           role-session-name: github-deploy
