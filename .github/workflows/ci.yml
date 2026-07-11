@@ -1,4 +1,4 @@
-name: Build and Deploy
+name: CI
 
 on:
   push:
@@ -15,7 +15,8 @@ on:
       - main
 
 jobs:
-  build-and-package:
+  build:
+    name: Build, Test & Lint
     runs-on: ubuntu-24.04-arm
 
     env:
@@ -63,7 +64,7 @@ jobs:
           retention-days: 1
 
   deploy-us-east-1:
-    needs: build-and-package
+    needs: build
 
     if: github.event_name == 'push'
     uses: ./.github/workflows/deploy-lambda.yml
@@ -73,7 +74,7 @@ jobs:
       aws-account-id: ${{ secrets.AWS_ACCOUNT_ID }}
 
   deploy-us-east-2:
-    needs: build-and-package
+    needs: build
 
     if: github.event_name == 'push'
     uses: ./.github/workflows/deploy-lambda.yml
