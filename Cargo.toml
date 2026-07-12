@@ -10,7 +10,7 @@ anyhow = "1"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-cloudwatchlogs = { version = "1", features = ["behavior-version-latest"] }
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["env"] }
+clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
 jluszcz_rust_utils = { git = "https://github.com/jluszcz/rust-utils" }
 lambda_runtime = "1"
