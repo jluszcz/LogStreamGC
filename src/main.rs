@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Arg, ArgAction, Command, value_parser};
+use clap::Parser;
 use jluszcz_rust_utils::{Verbosity, set_up_logger};
 use log::debug;
 use log_stream_gc::{APP_NAME, Config, gc_log_streams};
@@ -31,111 +31,91 @@ fn parse_regex(s: &str) -> Result<Regex, String> {
     Regex::new(s).map_err(|e| e.to_string())
 }
 
-fn parse_args() -> Result<(Verbosity, bool, String, Config)> {
-    // The default_value strings below must match Config::default() in lib.rs.
-    let matches = Command::new("log-stream-gc")
-        .version(env!("CARGO_PKG_VERSION"))
-        .author("Jacob Luszcz")
-        .infer_long_args(true)
-        .arg(
-            Arg::new("verbosity")
-                .short('v')
-                .action(ArgAction::Count)
-                .help("Verbose mode. Use -v for DEBUG, -vv for TRACE level logging."),
-        )
-        .arg(
-            Arg::new("dryrun")
-                .short('d')
-                .long("dryrun")
-                .alias("dry-run")
-                .action(ArgAction::SetTrue)
-                .help("Keeps all log streams, even if they would otherwise be deleted."),
-        )
-        .arg(
-            Arg::new("region")
-                .short('r')
-                .long("region")
-                .required(true)
-                .env("AWS_REGION")
-                .help("AWS region to run garbage collection in."),
-        )
-        .arg(
-            Arg::new("concurrency")
-                .short('c')
-                .long("concurrency")
-                .value_name("NUM")
-                .default_value("10")
-                .value_parser(parse_non_zero_usize)
-                .help("Maximum number of concurrent log stream deletions across all log groups."),
-        )
-        .arg(
-            Arg::new("progress-threshold")
-                .long("progress-threshold")
-                .value_name("NUM")
-                .default_value("500")
-                .value_parser(value_parser!(usize))
-                .help("Minimum number of log streams before showing progress updates."),
-        )
-        .arg(
-            Arg::new("progress-interval")
-                .long("progress-interval")
-                .value_name("NUM")
-                .default_value("100")
-                .value_parser(parse_non_zero_usize)
-                .help("Show progress every N log streams."),
-        )
-        .arg(
-            Arg::new("retention-multiplier")
-                .long("retention-multiplier")
-                .value_name("NUM")
-                .default_value("2.0")
-                .value_parser(parse_positive_f64)
-                .help("Multiplier for retention period (e.g., 2.0 = 2x retention period)."),
-        )
-        .arg(
-            Arg::new("batch-size")
-                .long("batch-size")
-                .value_name("NUM")
-                .default_value("50")
-                .value_parser(parse_non_zero_usize)
-                .help("Log groups requested per AWS page (clamped to 1-50, the API limit)."),
-        )
-        .arg(
-            Arg::new("include-pattern")
-                .long("include-pattern")
-                .value_name("REGEX")
-                .value_parser(parse_regex)
-                .help("Only process log groups matching this regex pattern."),
-        )
-        .arg(
-            Arg::new("exclude-pattern")
-                .long("exclude-pattern")
-                .value_name("REGEX")
-                .value_parser(parse_regex)
-                .help("Skip log groups matching this regex pattern."),
-        )
-        .get_matches();
+// The default_value strings below must match Config::default() in lib.rs.
+#[derive(Debug, Parser)]
+#[command(version, author, infer_long_args = true)]
+struct Args {
+    /// Verbose mode. Use -v for DEBUG, -vv for TRACE level logging.
+    #[arg(short = 'v', action = clap::ArgAction::Count)]
+    verbosity: u8,
 
-    let verbosity = matches.get_count("verbosity").into();
-    let dry_run = matches.get_flag("dryrun");
-    let region = matches.get_one::<String>("region").unwrap().to_string();
+    /// Keeps all log streams, even if they would otherwise be deleted.
+    #[arg(short = 'd', long, alias = "dry-run")]
+    dryrun: bool,
+
+    /// AWS region to run garbage collection in.
+    #[arg(short = 'r', long, env = "AWS_REGION")]
+    region: String,
+
+    /// Maximum number of concurrent log stream deletions across all log groups.
+    #[arg(
+        short = 'c',
+        long,
+        value_name = "NUM",
+        default_value = "10",
+        value_parser = parse_non_zero_usize
+    )]
+    concurrency: usize,
+
+    /// Minimum number of log streams before showing progress updates.
+    #[arg(long, value_name = "NUM", default_value = "500")]
+    progress_threshold: usize,
+
+    /// Show progress every N log streams.
+    #[arg(
+        long,
+        value_name = "NUM",
+        default_value = "100",
+        value_parser = parse_non_zero_usize
+    )]
+    progress_interval: usize,
+
+    /// Multiplier for retention period (e.g., 2.0 = 2x retention period).
+    #[arg(
+        long,
+        value_name = "NUM",
+        default_value = "2.0",
+        value_parser = parse_positive_f64
+    )]
+    retention_multiplier: f64,
+
+    /// Log groups requested per AWS page (clamped to 1-50, the API limit).
+    #[arg(
+        long,
+        value_name = "NUM",
+        default_value = "50",
+        value_parser = parse_non_zero_usize
+    )]
+    batch_size: usize,
+
+    /// Only process log groups matching this regex pattern.
+    #[arg(long, value_name = "REGEX", value_parser = parse_regex)]
+    include_pattern: Option<Regex>,
+
+    /// Skip log groups matching this regex pattern.
+    #[arg(long, value_name = "REGEX", value_parser = parse_regex)]
+    exclude_pattern: Option<Regex>,
+}
+
+fn parse_args() -> (Verbosity, bool, String, Config) {
+    let args = Args::parse();
 
     let config = Config {
-        concurrency_limit: *matches.get_one("concurrency").unwrap(),
-        progress_threshold: *matches.get_one("progress-threshold").unwrap(),
-        progress_interval: *matches.get_one("progress-interval").unwrap(),
-        retention_multiplier: *matches.get_one("retention-multiplier").unwrap(),
-        batch_size: *matches.get_one("batch-size").unwrap(),
-        include_pattern: matches.get_one::<Regex>("include-pattern").cloned(),
-        exclude_pattern: matches.get_one::<Regex>("exclude-pattern").cloned(),
+        concurrency_limit: args.concurrency,
+        progress_threshold: args.progress_threshold,
+        progress_interval: args.progress_interval,
+        retention_multiplier: args.retention_multiplier,
+        batch_size: args.batch_size,
+        include_pattern: args.include_pattern,
+        exclude_pattern: args.exclude_pattern,
     };
 
-    Ok((verbosity, dry_run, region, config))
+    (args.verbosity.into(), args.dryrun, args.region, config)
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let (verbosity, dry_run, region, config) = parse_args()?;
+    let (verbosity, dry_run, region, config) = parse_args();
     set_up_logger(APP_NAME, module_path!(), verbosity)?;
     debug!("region={region} dry_run={dry_run} config={config:?}");
 
