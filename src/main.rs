@@ -36,6 +36,7 @@ fn parse_args() -> Result<(Verbosity, bool, String, Config)> {
     let matches = Command::new("log-stream-gc")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Jacob Luszcz")
+        .infer_long_args(true)
         .arg(
             Arg::new("verbosity")
                 .short('v')
