@@ -76,6 +76,11 @@ jobs:
     needs: build
 
     if: github.event_name == 'push'
+
+    permissions:
+      id-token: write
+      contents: read
+
     uses: ./.github/workflows/deploy-lambda.yml
     with:
       aws-region: us-east-1
@@ -86,6 +91,11 @@ jobs:
     needs: build
 
     if: github.event_name == 'push'
+
+    permissions:
+      id-token: write
+      contents: read
+
     uses: ./.github/workflows/deploy-lambda.yml
     with:
       aws-region: us-east-2
