@@ -42,10 +42,11 @@ The core algorithm:
 
 ## Environment Configuration
 
-The project includes environment files:
+Terraform uses per-region workspaces. Source the matching env script (`. env-<region>`)
+to export `TF_VAR_aws_region` and select the workspace before running `terraform`:
 
-- `env-cmh`: Environment configuration (likely for Columbus)
-- `env-iad`: Environment configuration (likely for Northern Virginia)
+- `env-us_east_1` — region `us-east-1`, workspace `log-stream-gc_us-east-1`
+- `env-us_east_2` — region `us-east-2`, workspace `log-stream-gc_us-east-2`
 
 ## Deployment
 
