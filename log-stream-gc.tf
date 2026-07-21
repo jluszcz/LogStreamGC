@@ -105,41 +105,6 @@ data "aws_iam_policy_document" "github" {
   }
 }
 
-resource "aws_iam_policy" "github" {
-  name   = "log-stream-gc.github.${var.aws_region}"
-  policy = data.aws_iam_policy_document.github.json
-}
-
-resource "aws_iam_role" "github" {
-  name = "log-stream-gc.github.${var.aws_region}"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Principal = {
-          Federated = data.aws_iam_openid_connect_provider.github.arn
-        },
-        Action = "sts:AssumeRoleWithWebIdentity",
-        Condition = {
-          StringEquals = {
-            "token.actions.githubusercontent.com:aud" : "sts.amazonaws.com"
-          }
-          StringLike = {
-            "token.actions.githubusercontent.com:sub" : "repo:jluszcz/LogStreamGC:*"
-          },
-        }
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "github" {
-  role       = aws_iam_role.github.name
-  policy_arn = aws_iam_policy.github.arn
-}
-
 resource "aws_iam_policy" "github_deploy" {
   name   = "log-stream-gc.github-deploy.${var.aws_region}"
   policy = data.aws_iam_policy_document.github.json
