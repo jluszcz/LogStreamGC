@@ -92,8 +92,9 @@ Pushes to `main` that touch `src/**`, `Cargo*`, or `.github/workflows/**` trigge
 3. **Package** the `lambda` binary as `log-stream-gc.zip`
 4. **Deploy** to `us-east-1` and `us-east-2` in parallel via `deploy-lambda.yml`
 
-Infrastructure is managed with Terraform (`log-stream-gc.tf`). Lambda runs on `provided.al2023`, ARM64, with 128 MB
-memory and a 5-second timeout.
+Infrastructure is managed with Terraform (`log-stream-gc.tf`). Lambda runs on `provided.al2023`, ARM64, with 512 MB
+memory and a 15-minute timeout. The provider lock file (`.terraform.lock.hcl`) is committed, so `terraform init`
+resolves the same AWS provider version everywhere.
 
 ## Development
 

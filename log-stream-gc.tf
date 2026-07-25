@@ -19,10 +19,10 @@ data "aws_s3_bucket" "code_bucket" {
   bucket = format("code-%s-%s-an", data.aws_caller_identity.current.account_id, var.aws_region)
 }
 
-// Run daily
+// Run daily at 15:00 UTC
 resource "aws_cloudwatch_event_rule" "schedule" {
   name                = "log-stream-gc-schedule"
-  schedule_expression = "rate(1 day)"
+  schedule_expression = "cron(0 15 * * ? *)"
 }
 
 resource "aws_cloudwatch_event_target" "schedule_target" {
@@ -85,8 +85,10 @@ resource "aws_lambda_function" "log_stream_gc" {
   handler       = "ignored"
   publish       = "false"
   description   = "Clean up older log streams"
-  timeout       = 5
-  memory_size   = 128
+  # A full-region pass paginates every log group, then every stream in every
+  # group, before issuing deletes. 5s was not a realistic budget for that.
+  timeout     = 900
+  memory_size = 512
 }
 
 resource "aws_cloudwatch_log_group" "log_group" {
