@@ -5,19 +5,23 @@ use aws_sdk_cloudwatchlogs::Client;
 use aws_sdk_cloudwatchlogs::config::Region;
 use aws_sdk_cloudwatchlogs::types::{LogGroup, LogStream};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
-use futures::stream::{self, StreamExt};
+use futures::stream::{self, FuturesUnordered, StreamExt};
 use log::{debug, info, warn};
 use regex::Regex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 use tokio::sync::Semaphore;
+use tokio::task::JoinError;
 
 pub const APP_NAME: &str = "log_stream_gc";
 
 /// Throttling and transient errors are handled by the SDK's standard retry
 /// (exponential backoff with jitter) rather than a hand-rolled retry loop.
 const RETRY_MAX_ATTEMPTS: u32 = 10;
+
+/// `DescribeLogGroups` rejects a `limit` outside 1-50.
+const MAX_DESCRIBE_PAGE_SIZE: usize = 50;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -32,6 +36,24 @@ pub struct Config {
     pub batch_size: usize,
     pub include_pattern: Option<Regex>,
     pub exclude_pattern: Option<Regex>,
+}
+
+impl Config {
+    /// Clamps every field to the range the run actually depends on. `Config` is
+    /// public with public fields, so a library caller can otherwise hand over a
+    /// zero that divides by zero or a page size the API rejects.
+    fn normalize(&mut self) {
+        self.concurrency_limit = self.concurrency_limit.max(1);
+        self.progress_interval = self.progress_interval.max(1);
+        self.batch_size = self.batch_size.clamp(1, MAX_DESCRIBE_PAGE_SIZE);
+
+        // A zero, negative, or NaN multiplier puts the cutoff at or after today,
+        // which matches every stream in a group — including ones written to
+        // today — so it is a silent mass delete rather than a garbage collection.
+        if !self.retention_multiplier.is_finite() || self.retention_multiplier <= 0.0 {
+            self.retention_multiplier = Self::default().retention_multiplier;
+        }
+    }
 }
 
 impl Default for Config {
@@ -97,27 +119,32 @@ fn should_process_log_group(group: &LogGroup, config: &Config) -> bool {
     !exclude_match
 }
 
-async fn describe_log_streams(client: &Client, log_group_name: &str) -> Result<Vec<LogStream>> {
-    let mut log_streams = Vec::new();
+/// Attributes a panicked batch task to every log group it never got to, rather
+/// than to a single group. Returns the number of groups charged.
+fn record_batch_failure(failed_groups: &AtomicUsize, unprocessed_groups: &AtomicUsize) -> usize {
+    let unprocessed = unprocessed_groups.load(Ordering::Relaxed);
+    failed_groups.fetch_add(unprocessed, Ordering::Relaxed);
+    unprocessed
+}
 
-    let mut pages = client
-        .describe_log_streams()
-        .log_group_name(log_group_name)
-        .into_paginator()
-        .send();
-
-    while let Some(page) = pages.next().await {
-        let page = page.with_context(|| {
-            format!("Failed to describe log streams for log group: {log_group_name}")
-        })?;
-        log_streams.extend(page.log_streams.unwrap_or_default());
+fn join_batch(ctx: &GcContext, result: Result<(), JoinError>, unprocessed_groups: &AtomicUsize) {
+    if let Err(e) = result {
+        let unprocessed = record_batch_failure(&ctx.failed_groups, unprocessed_groups);
+        warn!("Batch processing task failed with {unprocessed} log group(s) unprocessed: {e}");
     }
+}
 
-    info!(
-        "Found {} log stream(s) for {log_group_name}",
-        log_streams.len()
-    );
-    Ok(log_streams)
+/// The date a log stream was last written to, which is what decides whether it
+/// still holds unexpired data. `last_event_timestamp` is absent for a stream
+/// that never received an event, so creation time is the fallback — deleting on
+/// creation time alone destroys recent events in long-lived active streams.
+fn last_activity_date(log_stream: &LogStream) -> Result<NaiveDate> {
+    let timestamp = log_stream
+        .last_event_timestamp()
+        .or_else(|| log_stream.creation_time())
+        .ok_or_else(|| anyhow!("Log stream has neither a last event time nor a creation time"))?;
+
+    Ok(parse_timestamp(timestamp)?.date_naive())
 }
 
 async fn gc_log_stream(
@@ -130,21 +157,15 @@ async fn gc_log_stream(
         .log_stream_name()
         .ok_or_else(|| anyhow!("Log stream is missing a name"))?;
 
-    let creation_time = log_stream
-        .creation_time()
-        .ok_or_else(|| anyhow!("Log stream {} is missing a creation time", log_stream_name))?;
+    let log_stream_activity_date = last_activity_date(&log_stream).with_context(|| {
+        format!("Failed to determine last activity for log stream: {log_stream_name}")
+    })?;
 
-    let log_stream_creation_date = parse_timestamp(creation_time)
-        .with_context(|| {
-            format!("Failed to parse creation time for log stream: {log_stream_name}")
-        })?
-        .date_naive();
-
-    if log_stream_creation_date < *keep_from_date {
+    if log_stream_activity_date < *keep_from_date {
         debug!(
-            "{} {log_group_name}/{log_stream_name} (creation date {log_stream_creation_date} < {keep_from_date})",
+            "{} {log_group_name}/{log_stream_name} (last activity {log_stream_activity_date} < {keep_from_date})",
             if ctx.dry_run {
-                "Keeping (Dry-Run)"
+                "Would delete (Dry-Run)"
             } else {
                 "Deleting"
             }
@@ -165,11 +186,29 @@ async fn gc_log_stream(
         }
     } else {
         debug!(
-            "Keeping {log_group_name}/{log_stream_name} (creation date {log_stream_creation_date} >= {keep_from_date})"
+            "Keeping {log_group_name}/{log_stream_name} (last activity {log_stream_activity_date} >= {keep_from_date})"
         );
     }
 
     Ok(())
+}
+
+/// The oldest date whose data is still worth keeping: `today` minus the log
+/// group's retention period scaled by the configured multiplier. Streams whose
+/// last activity predates this are expendable.
+fn keep_from_date(
+    retention_period: i32,
+    retention_multiplier: f64,
+    today: NaiveDate,
+) -> Result<NaiveDate> {
+    let retention_days = (retention_period as f64 * retention_multiplier) as i64;
+
+    let retention = Duration::try_days(retention_days)
+        .ok_or_else(|| anyhow!("Failed to create duration for {retention_days} days"))?;
+
+    today
+        .checked_sub_signed(retention)
+        .ok_or_else(|| anyhow!("Cutoff date is out of range for {retention_days} days"))
 }
 
 async fn gc_log_group(ctx: Arc<GcContext>, log_group: LogGroup) -> Result<()> {
@@ -179,75 +218,87 @@ async fn gc_log_group(ctx: Arc<GcContext>, log_group: LogGroup) -> Result<()> {
         .to_string();
 
     // Invariant: callers filter via `should_process_log_group`, which guarantees positive retention.
-    let log_group_retention_period: i64 = log_group
+    let log_group_retention_period = log_group
         .retention_in_days()
-        .expect("log group passed should_process_log_group filter")
-        .into();
+        .expect("log group passed should_process_log_group filter");
 
-    let retention_days =
-        (log_group_retention_period as f64 * ctx.config.retention_multiplier) as i64;
-    let keep_from_date = Utc::now().date_naive()
-        - Duration::try_days(retention_days)
-            .ok_or_else(|| anyhow!("Failed to create duration for {} days", retention_days))?;
+    let keep_from_date = keep_from_date(
+        log_group_retention_period,
+        ctx.config.retention_multiplier,
+        Utc::now().date_naive(),
+    )
+    .with_context(|| format!("Failed to compute a cutoff date for {log_group_name}"))?;
 
     debug!(
-        "Cleaning up {log_group_name} from before {keep_from_date} (retention: {}d * {} = {}d)",
-        log_group_retention_period, ctx.config.retention_multiplier, retention_days
+        "Cleaning up {log_group_name} from before {keep_from_date} (retention: {log_group_retention_period}d * {})",
+        ctx.config.retention_multiplier
     );
 
-    let log_streams = describe_log_streams(&ctx.client, &log_group_name).await?;
-    let log_stream_ct = log_streams.len();
-    ctx.total_streams
-        .fetch_add(log_stream_ct, Ordering::Relaxed);
+    let group_start = Instant::now();
 
-    if log_stream_ct == 0 {
-        debug!("No log streams found in {log_group_name}");
-        return Ok(());
+    let mut pages = ctx
+        .client
+        .describe_log_streams()
+        .log_group_name(&log_group_name)
+        .into_paginator()
+        .send();
+
+    let mut log_stream_ct = 0;
+    let mut error_ct = 0;
+    let mut first_error = None;
+    let mut next_progress_at = ctx.config.progress_interval;
+
+    // Each page is processed as it arrives, so memory is bounded by the page
+    // size rather than by the number of streams in the group, and the first
+    // delete does not wait on the last page.
+    while let Some(page) = pages.next().await {
+        let page = page.with_context(|| {
+            format!("Failed to describe log streams for log group: {log_group_name}")
+        })?;
+
+        let log_streams = page.log_streams.unwrap_or_default();
+        if log_streams.is_empty() {
+            continue;
+        }
+
+        let page_stream_ct = log_streams.len();
+        log_stream_ct += page_stream_ct;
+        ctx.total_streams
+            .fetch_add(page_stream_ct, Ordering::Relaxed);
+
+        let results: Vec<_> = stream::iter(log_streams)
+            .map(|log_stream| gc_log_stream(&ctx, &keep_from_date, &log_group_name, log_stream))
+            .buffer_unordered(ctx.config.concurrency_limit)
+            .collect()
+            .await;
+
+        for error in results.into_iter().filter_map(Result::err) {
+            error_ct += 1;
+            first_error.get_or_insert(error);
+        }
+
+        let processed = ctx
+            .processed_streams
+            .fetch_add(page_stream_ct, Ordering::Relaxed)
+            + page_stream_ct;
+
+        if log_stream_ct > ctx.config.progress_threshold && log_stream_ct >= next_progress_at {
+            next_progress_at = log_stream_ct + ctx.config.progress_interval;
+            let rate = processed as f64 / ctx.start_time.elapsed().as_secs_f64();
+            info!(
+                "Processed {log_stream_ct} log stream(s) in {log_group_name} ({rate:.1} streams/sec overall)"
+            );
+        }
     }
 
-    let group_start = Instant::now();
-    let stream_futures = stream::iter(log_streams.into_iter().enumerate())
-        .map(|(idx, log_stream)| {
-            let ctx = Arc::clone(&ctx);
-            let log_group_name = log_group_name.clone();
-
-            async move {
-                let result =
-                    gc_log_stream(&ctx, &keep_from_date, &log_group_name, log_stream).await;
-
-                let processed = ctx.processed_streams.fetch_add(1, Ordering::Relaxed) + 1;
-
-                if log_stream_ct > ctx.config.progress_threshold
-                    && (idx + 1) % ctx.config.progress_interval == 0
-                {
-                    let rate = processed as f64 / ctx.start_time.elapsed().as_secs_f64();
-                    info!(
-                        "Processed {}/{log_stream_ct} log streams in {log_group_name} ({rate:.1} streams/sec overall)",
-                        idx + 1
-                    );
-                }
-
-                result
-            }
-        })
-        .buffer_unordered(ctx.config.concurrency_limit);
-
-    let errors: Vec<_> = stream_futures
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .filter_map(Result::err)
-        .collect();
-
-    let error_count = errors.len();
-    if let Some(first_error) = errors.into_iter().next() {
+    if let Some(first_error) = first_error {
         return Err(anyhow!(
-            "Failed to process {error_count} log streams in {log_group_name}: {first_error}"
+            "Failed to process {error_ct} log streams in {log_group_name}: {first_error}"
         ));
     }
 
     debug!(
-        "Completed processing {log_stream_ct} log streams in {log_group_name} in {:.2}s",
+        "Completed processing {log_stream_ct} log stream(s) in {log_group_name} in {:.2}s",
         group_start.elapsed().as_secs_f64()
     );
 
@@ -269,10 +320,11 @@ pub async fn gc_log_streams(
         .load()
         .await;
 
-    // Clamp once so every use of the limit (semaphore, buffer_unordered, batch cap) agrees.
-    config.concurrency_limit = config.concurrency_limit.max(1);
+    // Clamp once so every use of a limit (semaphore, buffer_unordered, batch cap,
+    // progress modulus) agrees and stays in range.
+    config.normalize();
     let concurrency_limit = config.concurrency_limit;
-    let page_limit = config.batch_size.clamp(1, 50) as i32;
+    let page_limit = config.batch_size as i32;
 
     let ctx = Arc::new(GcContext {
         client: Client::new(&aws_config),
@@ -286,7 +338,7 @@ pub async fn gc_log_streams(
         config,
     });
 
-    let mut batch_handles = Vec::new();
+    let mut batches = FuturesUnordered::new();
     let mut total_log_groups: usize = 0;
     let mut page_count: usize = 0;
 
@@ -316,8 +368,13 @@ pub async fn gc_log_streams(
         }
         total_log_groups += batch.len();
 
+        // Counts the groups this batch has not finished yet, so a panicked task
+        // can be charged for exactly the groups it never processed.
+        let unprocessed_groups = Arc::new(AtomicUsize::new(batch.len()));
+
         let handle = tokio::spawn({
             let ctx = Arc::clone(&ctx);
+            let unprocessed_groups = Arc::clone(&unprocessed_groups);
 
             async move {
                 for log_group in batch {
@@ -331,18 +388,17 @@ pub async fn gc_log_streams(
                         ctx.failed_groups.fetch_add(1, Ordering::Relaxed);
                         warn!("Failed to process log group {log_group_name}: {e}");
                     }
+
+                    unprocessed_groups.fetch_sub(1, Ordering::Relaxed);
                 }
             }
         });
-        batch_handles.push(handle);
+        batches.push(async move { (handle.await, unprocessed_groups) });
 
-        if batch_handles.len() >= concurrency_limit {
-            let (completed, _, remaining) = futures::future::select_all(batch_handles).await;
-            if let Err(e) = completed {
-                ctx.failed_groups.fetch_add(1, Ordering::Relaxed);
-                warn!("Batch processing task failed: {e}");
-            }
-            batch_handles = remaining;
+        if batches.len() >= concurrency_limit
+            && let Some((result, unprocessed_groups)) = batches.next().await
+        {
+            join_batch(&ctx, result, &unprocessed_groups);
         }
     }
 
@@ -350,14 +406,11 @@ pub async fn gc_log_streams(
 
     debug!(
         "Waiting for {} batch processing tasks to complete",
-        batch_handles.len()
+        batches.len()
     );
 
-    for handle in batch_handles {
-        if let Err(e) = handle.await {
-            ctx.failed_groups.fetch_add(1, Ordering::Relaxed);
-            warn!("Batch processing task failed: {e}");
-        }
+    while let Some((result, unprocessed_groups)) = batches.next().await {
+        join_batch(&ctx, result, &unprocessed_groups);
     }
 
     let total_processed = ctx.processed_streams.load(Ordering::Relaxed);
@@ -399,6 +452,52 @@ mod tests {
         builder.build()
     }
 
+    fn make_log_stream(creation: Option<i64>, last_event: Option<i64>) -> LogStream {
+        let mut builder = LogStream::builder().log_stream_name("stream");
+        if let Some(c) = creation {
+            builder = builder.creation_time(c);
+        }
+        if let Some(e) = last_event {
+            builder = builder.last_event_timestamp(e);
+        }
+        builder.build()
+    }
+
+    /// 2024-01-01T00:00:00Z
+    const CREATED_MS: i64 = 1_704_067_200_000;
+    /// 2024-06-01T00:00:00Z
+    const LAST_EVENT_MS: i64 = 1_717_200_000_000;
+
+    #[test]
+    fn activity_date_prefers_last_event_over_creation() {
+        let stream = make_log_stream(Some(CREATED_MS), Some(LAST_EVENT_MS));
+        assert_eq!(
+            last_activity_date(&stream).unwrap().to_string(),
+            "2024-06-01"
+        );
+    }
+
+    #[test]
+    fn activity_date_falls_back_to_creation_when_stream_has_no_events() {
+        let stream = make_log_stream(Some(CREATED_MS), None);
+        assert_eq!(
+            last_activity_date(&stream).unwrap().to_string(),
+            "2024-01-01"
+        );
+    }
+
+    #[test]
+    fn activity_date_errors_when_stream_has_no_timestamps() {
+        let stream = make_log_stream(None, None);
+        assert!(last_activity_date(&stream).is_err());
+    }
+
+    #[test]
+    fn activity_date_errors_on_invalid_last_event_timestamp() {
+        let stream = make_log_stream(Some(CREATED_MS), Some(-1));
+        assert!(last_activity_date(&stream).is_err());
+    }
+
     #[test]
     fn parse_timestamp_valid() {
         // 2024-01-01T00:00:00Z = 1_704_067_200 seconds = 1_704_067_200_000 ms
@@ -422,6 +521,119 @@ mod tests {
     fn parse_timestamp_preserves_millis() {
         let dt = parse_timestamp(1_704_067_200_123).unwrap();
         assert_eq!(dt.timestamp_subsec_millis(), 123);
+    }
+
+    #[test]
+    fn a_failed_batch_counts_every_group_it_did_not_process() {
+        let failed_groups = AtomicUsize::new(1);
+        let unprocessed = AtomicUsize::new(3);
+
+        assert_eq!(record_batch_failure(&failed_groups, &unprocessed), 3);
+        assert_eq!(failed_groups.load(Ordering::Relaxed), 4);
+    }
+
+    fn date(s: &str) -> NaiveDate {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn keep_from_date_applies_the_retention_multiplier() {
+        assert_eq!(
+            keep_from_date(7, 2.0, date("2024-06-15")).unwrap(),
+            date("2024-06-01")
+        );
+    }
+
+    #[test]
+    fn keep_from_date_truncates_fractional_days() {
+        // 7 * 1.5 = 10.5 days, truncated to 10
+        assert_eq!(
+            keep_from_date(7, 1.5, date("2024-06-15")).unwrap(),
+            date("2024-06-05")
+        );
+    }
+
+    #[test]
+    fn keep_from_date_with_a_tiny_multiplier_keeps_only_today() {
+        assert_eq!(
+            keep_from_date(7, 0.01, date("2024-06-15")).unwrap(),
+            date("2024-06-15")
+        );
+    }
+
+    #[test]
+    fn keep_from_date_errors_when_the_duration_overflows() {
+        assert!(keep_from_date(i32::MAX, 1e12, date("2024-06-15")).is_err());
+    }
+
+    #[test]
+    fn keep_from_date_errors_when_the_date_underflows() {
+        assert!(keep_from_date(i32::MAX, 1.0, date("2024-06-15")).is_err());
+    }
+
+    #[test]
+    fn normalize_clamps_zero_progress_interval() {
+        let mut config = Config {
+            progress_interval: 0,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.progress_interval, 1);
+    }
+
+    #[test]
+    fn normalize_clamps_zero_concurrency_limit() {
+        let mut config = Config {
+            concurrency_limit: 0,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.concurrency_limit, 1);
+    }
+
+    #[test]
+    fn normalize_replaces_a_retention_multiplier_that_would_delete_everything() {
+        // A cutoff at or after today matches every stream, including ones written
+        // to today, so a non-positive or non-finite multiplier is a mass delete.
+        for multiplier in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let mut config = Config {
+                retention_multiplier: multiplier,
+                ..Config::default()
+            };
+            config.normalize();
+            assert_eq!(
+                config.retention_multiplier,
+                Config::default().retention_multiplier,
+                "multiplier {multiplier} should have been replaced"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_keeps_a_multiplier_below_one() {
+        let mut config = Config {
+            retention_multiplier: 0.5,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.retention_multiplier, 0.5);
+    }
+
+    #[test]
+    fn normalize_clamps_batch_size_to_the_api_page_limit() {
+        let mut config = Config {
+            batch_size: 500,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.batch_size, 50);
+
+        let mut config = Config {
+            batch_size: 0,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.batch_size, 1);
     }
 
     #[test]
