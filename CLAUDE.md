@@ -48,7 +48,9 @@ CI builds and tests on `ubuntu-24.04-arm` against `aarch64-unknown-linux-musl`; 
 - `Config::default()` in `src/lib.rs` and the clap `default_value` strings in `src/main.rs` are hand-synchronized.
   Changing a default in one file requires changing it in the other; both carry a comment saying so.
 - `Config` is public with public fields, so `gc_log_streams` calls `Config::normalize()` to clamp every limit before
-  use. Add new clamping there rather than relying on clap's validators, which only cover the CLI path.
+  use — including `retention_multiplier`, where a non-positive or non-finite value would put the cutoff at or after
+  today and delete every stream in the group. Add new clamping there rather than relying on clap's validators, which
+  only cover the CLI path.
 - The `lambda` binary name is load-bearing: the shared `lambda-package.yml` workflow copies
   `target/<target>/release/lambda` to `bootstrap`.
 

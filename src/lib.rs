@@ -46,6 +46,13 @@ impl Config {
         self.concurrency_limit = self.concurrency_limit.max(1);
         self.progress_interval = self.progress_interval.max(1);
         self.batch_size = self.batch_size.clamp(1, MAX_DESCRIBE_PAGE_SIZE);
+
+        // A zero, negative, or NaN multiplier puts the cutoff at or after today,
+        // which matches every stream in a group — including ones written to
+        // today — so it is a silent mass delete rather than a garbage collection.
+        if !self.retention_multiplier.is_finite() || self.retention_multiplier <= 0.0 {
+            self.retention_multiplier = Self::default().retention_multiplier;
+        }
     }
 }
 
@@ -582,6 +589,34 @@ mod tests {
         };
         config.normalize();
         assert_eq!(config.concurrency_limit, 1);
+    }
+
+    #[test]
+    fn normalize_replaces_a_retention_multiplier_that_would_delete_everything() {
+        // A cutoff at or after today matches every stream, including ones written
+        // to today, so a non-positive or non-finite multiplier is a mass delete.
+        for multiplier in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let mut config = Config {
+                retention_multiplier: multiplier,
+                ..Config::default()
+            };
+            config.normalize();
+            assert_eq!(
+                config.retention_multiplier,
+                Config::default().retention_multiplier,
+                "multiplier {multiplier} should have been replaced"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_keeps_a_multiplier_below_one() {
+        let mut config = Config {
+            retention_multiplier: 0.5,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.retention_multiplier, 0.5);
     }
 
     #[test]
