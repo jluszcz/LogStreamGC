@@ -57,7 +57,9 @@ log-stream-gc --region us-east-1 --retention-multiplier 3.0
 ### Lambda
 
 The Lambda binary reads the AWS region from the execution environment and runs a single garbage collection pass with
-default settings. It is triggered daily at **15:00 UTC** via an EventBridge (CloudWatch Events) schedule.
+default settings. It is triggered **once a day** via an EventBridge (CloudWatch Events) `rate(1 day)` schedule. The
+wall-clock time is arbitrary — roughly 24 hours after the rule was created — which is intentional: it keeps the run
+out of the top-of-the-hour bursts that cron-scheduled jobs pile into.
 
 ## Architecture
 

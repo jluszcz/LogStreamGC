@@ -19,10 +19,12 @@ data "aws_s3_bucket" "code_bucket" {
   bucket = format("code-%s-%s-an", data.aws_caller_identity.current.account_id, var.aws_region)
 }
 
-// Run daily at 15:00 UTC
+// Run daily. Deliberately a rate() rather than a cron(): the run lands at an
+// arbitrary wall-clock time (24h after rule creation), which keeps it out of
+// the top-of-the-hour bursts that every cron-scheduled job piles into.
 resource "aws_cloudwatch_event_rule" "schedule" {
   name                = "log-stream-gc-schedule"
-  schedule_expression = "cron(0 15 * * ? *)"
+  schedule_expression = "rate(1 day)"
 }
 
 resource "aws_cloudwatch_event_target" "schedule_target" {
