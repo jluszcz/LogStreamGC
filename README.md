@@ -7,8 +7,8 @@ Delete CloudWatch log streams after their current retention period has passed.
 ## Overview
 
 LogStreamGC is a Rust tool that garbage-collects old CloudWatch log streams. For each log group that has a retention
-policy set, it deletes any log streams whose creation date is older than a configurable multiple of that retention
-period (default: 2×).
+policy set, it deletes any log streams whose last event is older than a configurable multiple of that retention
+period (default: 2×). Streams that never received an event fall back to their creation time.
 
 Log groups without a retention policy are skipped.
 
@@ -16,7 +16,8 @@ Log groups without a retention policy are skipped.
 
 1. Enumerate all CloudWatch log groups in the target region (optionally filtered by regex)
 2. For each log group, compute a cutoff date: `now - (retention_period × retention_multiplier)`
-3. Delete all log streams whose creation time is before the cutoff date
+3. Delete all log streams whose last event time — or creation time, for streams with no events — is before the cutoff
+   date
 4. Throttling and transient errors are retried via the AWS SDK's standard exponential backoff (up to 10 attempts)
 
 ## Usage

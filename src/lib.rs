@@ -120,6 +120,19 @@ async fn describe_log_streams(client: &Client, log_group_name: &str) -> Result<V
     Ok(log_streams)
 }
 
+/// The date a log stream was last written to, which is what decides whether it
+/// still holds unexpired data. `last_event_timestamp` is absent for a stream
+/// that never received an event, so creation time is the fallback — deleting on
+/// creation time alone destroys recent events in long-lived active streams.
+fn last_activity_date(log_stream: &LogStream) -> Result<NaiveDate> {
+    let timestamp = log_stream
+        .last_event_timestamp()
+        .or_else(|| log_stream.creation_time())
+        .ok_or_else(|| anyhow!("Log stream has neither a last event time nor a creation time"))?;
+
+    Ok(parse_timestamp(timestamp)?.date_naive())
+}
+
 async fn gc_log_stream(
     ctx: &GcContext,
     keep_from_date: &NaiveDate,
@@ -130,21 +143,15 @@ async fn gc_log_stream(
         .log_stream_name()
         .ok_or_else(|| anyhow!("Log stream is missing a name"))?;
 
-    let creation_time = log_stream
-        .creation_time()
-        .ok_or_else(|| anyhow!("Log stream {} is missing a creation time", log_stream_name))?;
+    let log_stream_activity_date = last_activity_date(&log_stream).with_context(|| {
+        format!("Failed to determine last activity for log stream: {log_stream_name}")
+    })?;
 
-    let log_stream_creation_date = parse_timestamp(creation_time)
-        .with_context(|| {
-            format!("Failed to parse creation time for log stream: {log_stream_name}")
-        })?
-        .date_naive();
-
-    if log_stream_creation_date < *keep_from_date {
+    if log_stream_activity_date < *keep_from_date {
         debug!(
-            "{} {log_group_name}/{log_stream_name} (creation date {log_stream_creation_date} < {keep_from_date})",
+            "{} {log_group_name}/{log_stream_name} (last activity {log_stream_activity_date} < {keep_from_date})",
             if ctx.dry_run {
-                "Keeping (Dry-Run)"
+                "Would delete (Dry-Run)"
             } else {
                 "Deleting"
             }
@@ -165,7 +172,7 @@ async fn gc_log_stream(
         }
     } else {
         debug!(
-            "Keeping {log_group_name}/{log_stream_name} (creation date {log_stream_creation_date} >= {keep_from_date})"
+            "Keeping {log_group_name}/{log_stream_name} (last activity {log_stream_activity_date} >= {keep_from_date})"
         );
     }
 
@@ -397,6 +404,52 @@ mod tests {
             builder = builder.retention_in_days(r);
         }
         builder.build()
+    }
+
+    fn make_log_stream(creation: Option<i64>, last_event: Option<i64>) -> LogStream {
+        let mut builder = LogStream::builder().log_stream_name("stream");
+        if let Some(c) = creation {
+            builder = builder.creation_time(c);
+        }
+        if let Some(e) = last_event {
+            builder = builder.last_event_timestamp(e);
+        }
+        builder.build()
+    }
+
+    /// 2024-01-01T00:00:00Z
+    const CREATED_MS: i64 = 1_704_067_200_000;
+    /// 2024-06-01T00:00:00Z
+    const LAST_EVENT_MS: i64 = 1_717_200_000_000;
+
+    #[test]
+    fn activity_date_prefers_last_event_over_creation() {
+        let stream = make_log_stream(Some(CREATED_MS), Some(LAST_EVENT_MS));
+        assert_eq!(
+            last_activity_date(&stream).unwrap().to_string(),
+            "2024-06-01"
+        );
+    }
+
+    #[test]
+    fn activity_date_falls_back_to_creation_when_stream_has_no_events() {
+        let stream = make_log_stream(Some(CREATED_MS), None);
+        assert_eq!(
+            last_activity_date(&stream).unwrap().to_string(),
+            "2024-01-01"
+        );
+    }
+
+    #[test]
+    fn activity_date_errors_when_stream_has_no_timestamps() {
+        let stream = make_log_stream(None, None);
+        assert!(last_activity_date(&stream).is_err());
+    }
+
+    #[test]
+    fn activity_date_errors_on_invalid_last_event_timestamp() {
+        let stream = make_log_stream(Some(CREATED_MS), Some(-1));
+        assert!(last_activity_date(&stream).is_err());
     }
 
     #[test]
