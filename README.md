@@ -34,7 +34,7 @@ log-stream-gc [OPTIONS] --region <REGION>
 | `--dryrun` | `-d` | `false` | Log what would be deleted without actually deleting anything. |
 | `--concurrency <NUM>` | `-c` | `10` | Maximum number of concurrent log stream deletions across all log groups. |
 | `--retention-multiplier <NUM>` | | `2.0` | Multiplier applied to the log group's retention period to determine the cutoff. |
-| `--batch-size <NUM>` | | `50` | Number of log groups to process per batch. |
+| `--batch-size <NUM>` | | `50` | Log groups requested per AWS page (clamped to 1-50, the API limit). |
 | `--include-pattern <REGEX>` | | | Only process log groups whose name matches this regex. |
 | `--exclude-pattern <REGEX>` | | | Skip log groups whose name matches this regex. |
 | `--progress-threshold <NUM>` | | `500` | Minimum number of log streams in a group before showing progress updates. |
@@ -65,7 +65,7 @@ The project contains two binaries backed by a shared library:
 
 | Binary | Source | Description |
 |---|---|---|
-| `main` | `src/main.rs` | CLI tool with full argument support |
+| `log-stream-gc` | `src/main.rs` | CLI tool with full argument support |
 | `lambda` | `src/lambda.rs` | AWS Lambda handler for scheduled runs |
 
 Core logic lives in `src/lib.rs` (`gc_log_streams` and related functions).
