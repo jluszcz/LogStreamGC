@@ -7,12 +7,11 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-cloudwatchlogs = { version = "1", features = ["behavior-version-latest"] }
 chrono = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
-jluszcz_rust_utils = { git = "https://github.com/jluszcz/rust-utils" }
+jluszcz_rust_utils = { git = "https://github.com/jluszcz/rust-utils", features = ["aws", "cli", "lambda"] }
 lambda_runtime = "1"
 log = "0.4"
 regex = "1"

@@ -1,8 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use aws_config::ConfigLoader;
-use aws_config::retry::RetryConfig;
 use aws_sdk_cloudwatchlogs::Client;
-use aws_sdk_cloudwatchlogs::config::Region;
 use aws_sdk_cloudwatchlogs::types::{LogGroup, LogStream};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use futures::stream::{self, FuturesUnordered, StreamExt};
@@ -310,15 +307,8 @@ pub async fn gc_log_streams(
     mut config: Config,
     dry_run: bool,
 ) -> Result<()> {
-    let mut aws_config = ConfigLoader::default();
-    if let Some(region) = region {
-        aws_config = aws_config.region(Region::new(region));
-    }
-
-    let aws_config = aws_config
-        .retry_config(RetryConfig::standard().with_max_attempts(RETRY_MAX_ATTEMPTS))
-        .load()
-        .await;
+    let aws_config =
+        jluszcz_rust_utils::aws::config_with_max_attempts(region, RETRY_MAX_ATTEMPTS).await;
 
     // Clamp once so every use of a limit (semaphore, buffer_unordered, batch cap,
     // progress modulus) agrees and stays in range.

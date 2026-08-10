@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use jluszcz_rust_utils::cli::VerbosityArgs;
 use jluszcz_rust_utils::{Verbosity, set_up_logger};
 use log::debug;
 use log_stream_gc::{APP_NAME, Config, gc_log_streams};
@@ -35,9 +36,8 @@ fn parse_regex(s: &str) -> Result<Regex, String> {
 #[derive(Debug, Parser)]
 #[command(version, author, infer_long_args = true)]
 struct Args {
-    /// Verbose mode. Use -v for DEBUG, -vv for TRACE level logging.
-    #[arg(short = 'v', action = clap::ArgAction::Count)]
-    verbosity: u8,
+    #[command(flatten)]
+    verbosity: VerbosityArgs,
 
     /// Keeps all log streams, even if they would otherwise be deleted.
     #[arg(short = 'd', long, alias = "dry-run")]
