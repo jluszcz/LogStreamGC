@@ -56,7 +56,8 @@ CI builds and tests on `ubuntu-24.04-arm` against `aarch64-unknown-linux-musl`; 
 
 ## Dependencies
 
-- Uses `jluszcz_rust_utils` for logging utilities
+- Uses `jluszcz_rust_utils` for logging, the Lambda entry point (`lambda::run`), AWS SDK configuration
+  (`aws::config`), and the shared clap verbosity argument (`cli::VerbosityArgs`)
 - AWS SDK for CloudWatch Logs operations
 - Lambda runtime for AWS Lambda execution
 - Clap for CLI argument parsing
