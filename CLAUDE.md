@@ -38,10 +38,13 @@ The core algorithm:
 - `cargo test` - Run all tests
 - `cargo check` - Check for compilation errors without building
 - `cargo clippy --all-targets -- -D warnings` - Run Rust linter for code quality checks (includes test code)
-- `pre-commit run --all-files` - Run the repo's commit gate (`.pre-commit-config.yaml`, which enforces `cargo fmt`)
+- `pre-commit run --all-files` - Run the repo's commit gate (`.pre-commit-config.yaml`, which enforces `cargo fmt`
+  plus `terraform fmt`/`validate`)
 
 CI builds and tests on `ubuntu-24.04-arm` against `aarch64-unknown-linux-musl`; to reproduce that locally use
 `cargo build --release --target aarch64-unknown-linux-musl` (needs `musl-tools` and the target installed).
+
+`.github/workflows/ci.yml` also calls the shared `terraform-ci.yml`, which runs `terraform fmt -check -recursive` and `terraform validate` with `-backend=false` — the same checks the `terraform_fmt`/`terraform_validate` pre-commit hooks run locally. Terraform is never *applied* by CI.
 
 ## Conventions
 
