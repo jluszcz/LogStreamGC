@@ -44,7 +44,9 @@ The core algorithm:
 CI builds and tests on `ubuntu-24.04-arm` against `aarch64-unknown-linux-musl`; to reproduce that locally use
 `cargo build --release --target aarch64-unknown-linux-musl` (needs `musl-tools` and the target installed).
 
-`.github/workflows/ci.yml` also calls the shared `terraform-ci.yml`, which runs `terraform fmt -check -recursive` and `terraform validate` with `-backend=false` — the same checks the `terraform_fmt`/`terraform_validate` pre-commit hooks run locally. Terraform is never *applied* by CI.
+`.github/workflows/ci.yml` also calls the shared `terraform-ci.yml`, which runs `terraform fmt -check -recursive`, then `terraform init -backend=false` and `terraform validate` — the same checks the `terraform_fmt`/`terraform_validate` pre-commit hooks run locally. Terraform is never *applied* by CI.
+
+The Terraform check is deliberately absent from `on.push.paths`. That filter gates the *whole* workflow, and `package`/`deploy` are gated only by `if: github.event_name == 'push'` — listing `.tf` there would make a Terraform-only push to `main` deploy the Lambda. The `pull_request` trigger has no path filter, so the check still runs on every PR, which is where it gates.
 
 ## Conventions
 
