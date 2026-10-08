@@ -1365,7 +1365,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jluszcz_rust_utils"
 version = "0.1.0"
-source = "git+https://github.com/jluszcz/rust-utils#6d2d2a9c91b9613ba7fd818e3443e7aea11ff717"
+source = "git+https://github.com/jluszcz/rust-utils#05f71d3dcd6ed6e81eca468b5fdac3fe854904ac"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -2028,9 +2028,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.53.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
 dependencies = [
  "bytes",
  "libc",
